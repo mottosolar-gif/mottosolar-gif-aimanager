@@ -167,6 +167,6 @@ blocked      → in_progress | cancelled
 2. ✅ WP-P1-B1 (คลาวด์ประมวลผล postback) → deploy จริงแล้ว → แก้ HIGH (ownership check) → code-reviewer ผ่าน (D-P0-10)
 3. ✅ WP-P1-B2 (endpoint ส่งการ์ดจริง) → ติดตั้ง LIVE แล้ว → ทดสอบมือ (กดปุ่มจริงบนโทรศัพท์) → แก้ Medium+Low → code-reviewer ผ่าน (D-P0-10)
 4. ✅ WP-P1-B3 (ขยาย fan-out รับปุ่มจาก 1:1) → ติดตั้ง LIVE แล้ว (commit `7a5c852`) → แก้ finding early-return ครอบเกินขอบเขต + is_scalar guard → code-reviewer ตรวจ 2 รอบผ่าน (D-P0-11)
-5. **กำลังรอ:** ทดสอบวงจรเต็มจริง — พี่เต้กดปุ่มจริงบนโทรศัพท์ในแชท 1:1 (ไม่ใช่กลุ่มทดสอบ) แล้วยืนยันว่า
-   `task.status` เปลี่ยนจริงในฐานคลาวด์ — ยังไม่เคยทดสอบผ่าน LINE webhook signature จริงสักครั้ง (ทดสอบทั้งหมด
-   ที่ผ่านมาเป็น synthetic events ยิงตรงเข้าฟังก์ชัน) เมื่อผ่านแล้วถือว่า WP-P1-B ทั้งชุดปิดจบสมบูรณ์
+5. ✅ ทดสอบวงจรเต็มจริงผ่านแล้ว — พี่เต้กดปุ่ม "❌ ปฏิเสธ" จริงบนโทรศัพท์ (ไม่ใช่ synthetic event) →
+   `task.status: assigned -> rejected` เปลี่ยนจริงในฐานคลาวด์ พร้อม `task_event` ครบ (D-P0-12) —
+   **WP-P1-B (B1+B2+B3) ปิดจบสมบูรณ์ 100%**

@@ -228,3 +228,44 @@ signature จริง) — ขั้นถัดไปที่ควรทำ�
   — ต้องรอพี่เต้ตัดสินใจว่าจะแยก commit ของ `api/line_webhook.php` ยังไงก่อน
 
 **ต่อไป:** ทดสอบวงจรเต็มจริง (พี่เต้กดปุ่มจริงในแชท 1:1) แล้วปิด WP-P1 ทั้งชุด
+
+---
+
+## D-P0-12 · WP-P1-B ปิดจบสมบูรณ์ — พิสูจน์วงจรเต็มจริงด้วยข้อมูลจริง 100% (2026-08-27)
+
+พี่เต้ให้ `CLOUDFLARE_API_TOKEN` (custom token, สิทธิ์ D1:Edit เท่านั้น) เข้าถึง D1 จริงได้เป็นครั้งแรกในเซสชันนี้
+(ก่อนหน้านี้ wrangler ใช้ไม่ได้เพราะไม่มี token แบบ non-interactive) — ใช้เฉพาะ env var ใน shell รอบนี้เท่านั้น
+ไม่เขียนลงไฟล์ใดๆ ที่เข้า git
+
+**สิ่งที่ทำ:**
+1. ลบ 2 แถวทดสอบเก่าจาก B3 ที่ค้างใน D1 (`test-b3-verify-pos-001`, `test-b3-verify-sanity-001`) — ตรวจก่อนลบว่า
+   ไม่มีผลข้างเคียง (job หนึ่งตาย `dead` เพราะ unlinked person ตามคาด อีกอันจบปกติ ไม่มี task ใดถูกสร้าง/แก้)
+2. สร้าง task ทดสอบจริง `TEST-B3-LIVELOOP-001` มอบหมายให้ `P-EKAPUN` (bootstrap `person`/`person_link` มีอยู่
+   แล้วจาก WP-P1-B1) → เรียก `aim_notify.php` ส่งการ์ดจริงไปที่โทรศัพท์พี่เต้
+3. **เจอบั๊ก encoding ระหว่างทาง:** ข้อความไทยที่ส่งผ่าน curl เป็น inline shell argument บน Windows Bash โดน
+   บิดเบือน (การ์ดขึ้น `??????????????` แทนภาษาไทย) — ตรวจสอบแล้วว่า D1 เก็บข้อความถูกต้อง 100% (ไม่ใช่บั๊กใน
+   `aim_send_task_card`/`json_encode`) สาเหตุคือ Windows console codepage ตอนส่ง non-ASCII ผ่าน command-line
+   argument โดยตรง **แก้โดยเขียน JSON payload ลงไฟล์ก่อน แล้วส่งด้วย `curl --data-binary @file`** แทนการพิมพ์
+   inline — ยืนยันแล้วว่าการ์ดใบสองขึ้นภาษาไทยถูกต้อง (บทเรียนเดียวกับ `powershell-file-write-corrupts-encoding`
+   ในความจำ แต่เป็นฝั่ง argument-passing ไม่ใช่ file-write — ต้องระวังทุกครั้งที่ส่งข้อความไทยผ่าน Bash tool เป็น
+   inline argument บนเครื่อง Windows นี้ ไม่ใช่แค่ตอนเขียนไฟล์)
+4. **พี่เต้กดปุ่ม "❌ ปฏิเสธ" จริงบนโทรศัพท์** → ตรวจ D1 ทันที:
+   ```
+   task.status: assigned -> rejected
+   task_event: actor_person_code=P-EKAPUN, old_status=assigned, new_status=rejected, source=line
+   ```
+   **พิสูจน์วงจรเต็มจริงครบทุกจุด:** ปุ่มจริงบนโทรศัพท์ → LINE webhook (signature จริง ไม่ใช่ synthetic event
+   อีกต่อไป) → `aim_forward_events` forward สำเร็จ (WP-P1-B3) → คลาวด์รับ postback (WP-P1-B1) → ownership check
+   ผ่าน (`assigneePersonCode === actorPersonCode`) → `applyTransition` เปลี่ยนสถานะจริง → `task_event` บันทึกครบ
+5. ลบ `task`/`task_event` ของ `TEST-B3-LIVELOOP-001` ทิ้งหลังทดสอบเสร็จ — D1 กลับสู่สถานะสะอาด ไม่เหลือข้อมูล
+   ทดสอบค้างเลย (ตรวจซ้ำด้วย `SELECT count(*) ... LIKE 'test-b3%'` = 0)
+
+**สรุป WP-P1-B (B1+B2+B3) ปิดจบสมบูรณ์ 100% — verified end-to-end ด้วยข้อมูลจริงทุกจุด ไม่ใช่แค่ synthetic
+events หรือทฤษฎีอีกต่อไป** จิ๊กซอว์ AI Manager ชิ้นแรกที่ครบวงจรสองทาง (LINE ↔ คลาวด์) ใช้งานได้จริงแล้ว
+
+**ค้างเดิม (ไม่กระทบ):** คอมเมนต์เก่าใน `api/line_webhook.php:51-52` ยังไม่แก้ (รอพี่เต้ตัดสินใจเรื่องแยก commit
+งานอีกเซสชัน) · `CLOUDFLARE_API_TOKEN` อยู่ใน shell env ของเซสชันนี้เท่านั้น ยังไม่ถาวร — ถ้าอยากให้จำข้ามเซสชัน
+ต้องบอกให้ตั้งเป็น persistent env var
+
+**ต่อไป:** รอพี่เต้ตัดสินใจทิศทางถัดไปของ AI Manager (P2 ตามแผน — ขยายไปพนักงานคนอื่น / natural-language command /
+ฟีเจอร์อื่นตาม master spec เดิม)
