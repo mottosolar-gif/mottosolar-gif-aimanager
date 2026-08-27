@@ -103,10 +103,7 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
   } catch (error) {
     if (error instanceof InvalidPayloadError) {
       log(now, "ingest", "invalid_payload", requestRef);
-      return json(
-        { ok: false, next: "send supported LINE event metadata and retry" },
-        400,
-      );
+      return json({ ok: false, next: error.message }, 400);
     }
     log(now, "ingest", "queue_unavailable", requestRef);
     return json(

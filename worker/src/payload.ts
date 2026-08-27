@@ -82,6 +82,11 @@ export async function extractMetadata(
   if (!Array.isArray(envelope.events) || envelope.events.length === 0) {
     throw new InvalidPayloadError("events must be a non-empty array");
   }
+  if (envelope.events.length > 50) {
+    throw new InvalidPayloadError(
+      "send at most 50 events per request; split into multiple requests",
+    );
+  }
 
   return Promise.all(
     envelope.events.map(async (rawEvent, index) => {

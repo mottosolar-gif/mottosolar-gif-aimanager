@@ -230,6 +230,28 @@ describe("aim-ingest Worker", () => {
     expect(database.jobs).toHaveLength(0);
   });
 
+  it("rejects requests containing more than 50 events with a useful 400 response", async () => {
+    const database = new MemoryD1();
+    const payload = validPayload();
+    payload.events = Array.from({ length: 51 }, (_, index) => ({
+      ...(payload.events as Array<Record<string, unknown>>)[0],
+      webhookEventId: `evt-batch-${index}`,
+    }));
+
+    const response = await handleRequest(
+      ingestRequest(JSON.stringify(payload)),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      next: "send at most 50 events per request; split into multiple requests",
+    });
+    expect(database.inboxEvents).toHaveLength(0);
+    expect(database.jobs).toHaveLength(0);
+  });
+
   it("reports queue depth and the last ingest time from D1", async () => {
     const database = new MemoryD1();
     const env = makeEnv(database);

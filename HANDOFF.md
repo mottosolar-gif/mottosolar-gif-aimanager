@@ -117,3 +117,72 @@ $ npm run privacy:check:remote → "Privacy guard passed (remote); checked 1 mig
 
 **Worker ที่ deploy จริง:** `https://aim-ingest.mottosolar.workers.dev` · ฐาน `aim-db` (region APAC)
 **ยืนยันแล้วว่าไม่กระทบ `mottosolar-line-relay`** (ของ homelab — modified_on ไม่เปลี่ยนก่อน/หลัง deploy)
+
+## แก้ผลตรวจจาก code-reviewer 2026-08-27
+
+- **VERIFIED (จากไฟล์):** เปลี่ยน `schema/privacy-guard.mjs` จาก denylist ชื่อคอลัมน์เป็น `ALLOWED_COLUMNS` ตายตัวสำหรับ 6 ตาราง โดย unknown table และคอลัมน์นอก allowlist ทำให้ guard ล้มทันที พร้อมทางไปต่อ เก็บการตรวจ ENUM, `body_ref` แบบ NULL-only และ raw LINE ID เดิมไว้ครบ รวมทั้งตรวจ `ALTER TABLE ... ADD COLUMN` ด้วย
+- **VERIFIED (จากผลทดสอบของผู้เขียน):** `worker/src/payload.ts` ปฏิเสธ request ที่มีมากกว่า 50 events ด้วย `InvalidPayloadError`; handler ตอบ HTTP 400 และ `next` ระบุให้ส่งไม่เกิน 50 events พร้อมแบ่งเป็นหลาย request โดย regression test ใหม่ผ่าน
+- **VERIFIED (จากไฟล์):** `.github/workflows/deploy.yml` มี step `Verify no PII reached the remote database` หลัง `Deploy aim-ingest` เรียก `npm run privacy:check:remote` และรับ `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` จาก secrets; รอบนี้ไม่ได้รัน workflow หรือ deploy จริง
+
+### ผลชุดทดสอบบังคับหลังแก้
+
+```text
+$ npm run typecheck
+> tsc --noEmit
+Exit code: 0
+
+$ npm test
+Test Files  1 passed (1)
+Tests       8 passed (8)
+Duration    577ms
+Exit code: 0
+
+$ npm run db:migration:check
+Migration check passed twice in memory (1 file(s)); body_ref remains NULL-only.
+Exit code: 0
+
+$ npm run privacy:check
+Privacy guard passed (schema-only); checked 1 migration file(s).
+Exit code: 0
+```
+
+### ผลทดลองช่องโหว่ `note TEXT`
+
+สร้าง `schema/migrations/9999_privacy_guard_note_test.sql` ชั่วคราวด้วยเนื้อหา `ALTER TABLE inbox_event ADD COLUMN note TEXT;` แล้วรัน:
+
+```text
+$ npm run privacy:check
+Error: Privacy schema guard failed:
+- 9999_privacy_guard_note_test.sql: inbox_event.note is not in ALLOWED_COLUMNS; remove it or add it only after confirming it holds no PII
+Remove unapproved schema fields and rerun npm run privacy:check.
+Exit code: 1
+```
+
+หลังลบ migration ทดสอบแล้วรันซ้ำ:
+
+```text
+$ npm run privacy:check
+Privacy guard passed (schema-only); checked 1 migration file(s).
+Exit code: 0
+
+TEMP_REMOVED
+```
+
+- **VERIFIED (จากผลคำสั่งของผู้เขียน):** reproduction เดิมถูกบล็อกแล้ว และไม่มีไฟล์ migration ทดสอบเหลืออยู่
+- **INFERRED:** การแก้ทั้งสามข้อพร้อมส่งให้ Claude/พี่เต้ตรวจซ้ำ; ยังไม่ถือเป็นผลยืนยันอิสระของโค้ดรอบนี้จนกว่าจะมี code review และ rerun จากผู้ตรวจค่ะ
+
+### ผลพยายามสร้าง local commit และ `git log --oneline`
+
+```text
+$ git add -A
+fatal: Unable to create 'C:/WebApp/aim/.git/index.lock': Permission denied
+Exit code: 128
+
+$ git log --oneline
+e6781ec แก้ spawnSync บน Windows: เรียก wrangler ผ่าน node ตรง ไม่พึ่ง shell/npx.cmd
+1d8fffa P0-1..P0-3: โครง repo + Worker aim-ingest + D1 schema (metadata-only)
+```
+
+- **VERIFIED (จากผลคำสั่ง):** sandbox รอบนี้ให้ `.git` เป็น read-only จึง stage การแก้รอบนี้และสร้าง commit ใหม่ไม่ได้; HEAD ยังเป็น `e6781ec` และไม่มีการ push
+- **VERIFIED (จาก `git diff --cached --name-status`):** `docs/DECISIONS_P0.md` ถูก stage ไว้จากภายนอกก่อนความพยายามนี้ ส่วนไฟล์ที่น้องกุ้งแก้ยังไม่ถูก stage; ไม่ได้ unstage หรือแก้ staged change เดิม
+- **ทางไปต่อ:** รัน `git add -A`, `git diff --cached --check`, `git commit -m "Harden privacy guard and ingest limits"` และ `git log --oneline` จาก process ที่เขียน `C:\WebApp\aim\.git` ได้ โดยห้าม push ค่ะ
