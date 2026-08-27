@@ -30,6 +30,7 @@ const sourceIdFields = {
   room: "roomId",
   user: "userId",
 } as const;
+const postbackDataPattern = /^[A-Za-z0-9=&_-]*$/;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -114,12 +115,28 @@ export async function extractMetadata(
         messageType = requiredToken(message.type, "message type", messageTypes);
       }
 
+      let postbackData: string | null = null;
+      if (eventType === "postback") {
+        const postback = event.postback;
+        if (typeof postback === "object" && postback !== null && !Array.isArray(postback)) {
+          const data = (postback as JsonRecord).data;
+          if (
+            typeof data === "string" &&
+            data.length <= 256 &&
+            postbackDataPattern.test(data)
+          ) {
+            postbackData = data;
+          }
+        }
+      }
+
       return {
         eventId,
         eventType,
         messageType,
         sourceType,
         sourceHash: await hashSourceId(sourceIdValue, sourceHashSalt),
+        postbackData,
         occurredAt: occurredAt(event.timestamp),
         receivedAt,
         payloadBytes,

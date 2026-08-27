@@ -10,6 +10,7 @@ export interface EventMetadata {
   messageType: string | null;
   sourceType: string;
   sourceHash: string | null;
+  postbackData: string | null;
   occurredAt: string;
   receivedAt: string;
   payloadBytes: number;
@@ -20,4 +21,3 @@ export interface IngestResult {
   accepted: number;
   duplicates: number;
 }
-

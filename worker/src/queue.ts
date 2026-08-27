@@ -1,14 +1,26 @@
 import {
   claimPendingJob,
   completeJob,
+  findPersonCodeBySourceHash,
   killJob,
+  readInboxPostback,
   readPendingJobs,
   recordCronTick,
   retryJob,
 } from "./db/repository.ts";
 import type { PendingJob } from "./db/repository.ts";
+import { applyTransition } from "./taskMachine.ts";
 
 export const MAX_JOBS_PER_TICK = 10;
+
+const AIM_ACTION_TO_STATUS: Record<string, string> = {
+  aim_accept: "accepted",
+  aim_reject: "rejected",
+  aim_enroute: "en_route",
+  aim_arrived: "arrived",
+  aim_start: "in_progress",
+  aim_complete: "completed",
+};
 
 export interface ProcessQueueResult {
   processed: number;
@@ -36,6 +48,31 @@ export async function processQueue(
       try {
         if (job.kind !== "line_event") {
           throw new Error(`unknown job kind: ${job.kind}`);
+        }
+        const inboxPostback = await readInboxPostback(db, job.eventId);
+        if (inboxPostback?.postbackData !== null && inboxPostback?.postbackData !== undefined) {
+          const params = new URLSearchParams(inboxPostback.postbackData);
+          const action = params.get("act");
+          if (action !== null && Object.hasOwn(AIM_ACTION_TO_STATUS, action)) {
+            const personCode =
+              inboxPostback.sourceHash === null
+                ? null
+                : await findPersonCodeBySourceHash(db, inboxPostback.sourceHash);
+            if (personCode === null) {
+              throw new Error(
+                "unlinked person for postback: " + inboxPostback.sourceHash,
+              );
+            }
+            await applyTransition(
+              db,
+              params.get("task") ?? "",
+              AIM_ACTION_TO_STATUS[action],
+              personCode,
+              "line",
+              null,
+              now,
+            );
+          }
         }
         await completeJob(db, job.id, job.eventId, now);
         result.processed += 1;

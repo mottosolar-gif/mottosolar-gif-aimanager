@@ -10,9 +10,9 @@ export interface PendingJob {
 const insertInboxSql = `
   INSERT OR IGNORE INTO inbox_event (
     event_id, event_type, message_type, source_type, source_hash,
-    occurred_at, received_at, payload_bytes, payload_sha256,
+    postback_data, occurred_at, received_at, payload_bytes, payload_sha256,
     status, attempts, last_error, body_ref, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?)
 `;
 
 const insertJobSql = `
@@ -51,6 +51,7 @@ export async function enqueueEvents(
           event.messageType,
           event.sourceType,
           event.sourceHash,
+          event.postbackData,
           event.occurredAt,
           event.receivedAt,
           event.payloadBytes,
@@ -113,6 +114,33 @@ export async function readPendingJobs(
     kind: row.kind,
     attempts: row.attempts,
   }));
+}
+
+export async function findPersonCodeBySourceHash(
+  db: D1Database,
+  sourceHash: string,
+): Promise<string | null> {
+  const query = await db
+    .prepare("SELECT person_code FROM person_link WHERE source_hash = ?")
+    .bind(sourceHash)
+    .all<{ person_code: string }>();
+  return query.results[0]?.person_code ?? null;
+}
+
+export async function readInboxPostback(
+  db: D1Database,
+  eventId: string,
+): Promise<{ postbackData: string | null; sourceHash: string | null } | null> {
+  const query = await db
+    .prepare(
+      "SELECT postback_data, source_hash FROM inbox_event WHERE event_id = ?",
+    )
+    .bind(eventId)
+    .all<{ postback_data: string | null; source_hash: string | null }>();
+  const row = query.results[0];
+  return row
+    ? { postbackData: row.postback_data, sourceHash: row.source_hash }
+    : null;
 }
 
 export async function claimPendingJob(

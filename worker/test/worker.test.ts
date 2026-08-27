@@ -8,7 +8,8 @@ interface StoredInbox {
   event_type: string;
   message_type: string | null;
   source_type: string;
-  source_hash: string;
+  source_hash: string | null;
+  postback_data: string | null;
   occurred_at: string;
   received_at: string;
   payload_bytes: number;
@@ -96,6 +97,7 @@ class MemoryD1 {
       message_type: "text",
       source_type: "group",
       source_hash: "a".repeat(64),
+      postback_data: null,
       occurred_at: options.nextRunAt,
       received_at: options.nextRunAt,
       payload_bytes: 1,
@@ -125,6 +127,7 @@ class MemoryD1 {
           messageType,
           sourceType,
           sourceHash,
+          postbackData,
           occurredAt,
           receivedAt,
           payloadBytes,
@@ -137,7 +140,8 @@ class MemoryD1 {
             event_type: String(eventType),
             message_type: messageType === null ? null : String(messageType),
             source_type: String(sourceType),
-            source_hash: String(sourceHash),
+            source_hash: sourceHash === null ? null : String(sourceHash),
+            postback_data: postbackData === null ? null : String(postbackData),
             occurred_at: String(occurredAt),
             received_at: String(receivedAt),
             payload_bytes: Number(payloadBytes),
@@ -180,6 +184,16 @@ class MemoryD1 {
             attempts,
           }));
         return result(rows);
+      }
+      if (/SELECT postback_data, source_hash FROM inbox_event/i.test(statement.query)) {
+        const event = this.inboxEvents.find(
+          (row) => row.event_id === String(statement.values[0]),
+        );
+        return result(
+          event
+            ? [{ postback_data: event.postback_data, source_hash: event.source_hash }]
+            : [],
+        );
       }
       if (/SET status = 'processing'.*status = 'pending'/is.test(statement.query)) {
         const [jobId] = statement.values;
@@ -277,6 +291,21 @@ function validPayload(eventId = "evt-001"): Record<string, unknown> {
   };
 }
 
+function postbackPayload(eventId: string, data: unknown): Record<string, unknown> {
+  return {
+    destination: `U${"b".repeat(32)}`,
+    events: [
+      {
+        webhookEventId: eventId,
+        type: "postback",
+        timestamp: 1_787_765_432_000,
+        source: { type: "group", groupId: rawGroupId },
+        postback: { data },
+      },
+    ],
+  };
+}
+
 function makeEnv(database: MemoryD1): Env {
   return {
     AIM_INGEST_KEY: ingestKey,
@@ -331,6 +360,58 @@ describe("aim-ingest Worker", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ accepted: 1 });
+  });
+
+  it("stores valid postback data", async () => {
+    const database = new MemoryD1();
+    const response = await handleRequest(
+      ingestRequest(
+        JSON.stringify(
+          postbackPayload("evt-postback", "act=aim_accept&task=T-001"),
+        ),
+      ),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    expect(database.inboxEvents[0].postback_data).toBe(
+      "act=aim_accept&task=T-001",
+    );
+  });
+
+  it("stores malformed postback data as NULL while accepting other events", async () => {
+    const database = new MemoryD1();
+    const payload = postbackPayload("evt-bad-postback", "act=aim accept!");
+    payload.events = [
+      ...(payload.events as Array<Record<string, unknown>>),
+      (validPayload("evt-after-bad").events as Array<Record<string, unknown>>)[0],
+    ];
+
+    const response = await handleRequest(
+      ingestRequest(JSON.stringify(payload)),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: 2 });
+    expect(database.inboxEvents).toHaveLength(2);
+    expect(database.inboxEvents[0].postback_data).toBeNull();
+  });
+
+  it("always stores postback data as NULL for non-postback events", async () => {
+    const database = new MemoryD1();
+    const payload = validPayload("evt-message-with-postback-field");
+    (payload.events as Array<Record<string, unknown>>)[0].postback = {
+      data: "act=aim_accept&task=T-001",
+    };
+
+    const response = await handleRequest(
+      ingestRequest(JSON.stringify(payload)),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    expect(database.inboxEvents[0].postback_data).toBeNull();
   });
 
   it("returns 403 and writes nothing when the shared header is wrong", async () => {
