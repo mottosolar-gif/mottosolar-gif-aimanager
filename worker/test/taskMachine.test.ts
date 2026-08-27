@@ -4,6 +4,7 @@ import {
   deriveOverdue,
   type TaskRow,
 } from "../src/taskMachine.ts";
+import { applyTaskTransition } from "../src/db/repository.ts";
 
 interface StoredTask {
   id: number;
@@ -54,6 +55,10 @@ class MemoryStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
+    return this.database.execute(this) as D1Result<T>;
+  }
+
+  async run<T>(): Promise<D1Result<T>> {
     return this.database.execute(this) as D1Result<T>;
   }
 }
@@ -111,9 +116,17 @@ class MemoryD1 {
       return result(task ? [{ ...task }] : []);
     }
     if (/UPDATE task SET/i.test(statement.query)) {
-      const taskRef = String(statement.values.at(-1));
+      const guardedByStatus = /WHERE task_ref = \? AND status = \?/i.test(
+        statement.query,
+      );
+      const taskRef = String(statement.values.at(guardedByStatus ? -2 : -1));
+      const expectedStatus = guardedByStatus
+        ? String(statement.values.at(-1))
+        : null;
       const task = this.tasks.find((row) => row.task_ref === taskRef);
-      if (!task) return result([], 0);
+      if (!task || (expectedStatus !== null && task.status !== expectedStatus)) {
+        return result([], 0);
+      }
 
       const assignments = statement.query
         .slice(statement.query.indexOf("SET") + 3, statement.query.indexOf("WHERE"))
@@ -217,7 +230,8 @@ describe("task state machine", () => {
     expect(updated.updatedAt).toBe(now);
     if (timestamp) expect(updated[timestamp]).toBe(now);
     if (to === "cancelled") expect(updated.cancelReason).toBe(note);
-    expect(database.batchCalls).toBe(1);
+    if (to === "completed") expect(updated.completionNote).toBe(note);
+    expect(database.batchCalls).toBe(0);
     expect(database.taskEvents).toEqual([
       {
         task_ref: "TASK-001",
@@ -229,6 +243,31 @@ describe("task state machine", () => {
         occurred_at: now,
       },
     ]);
+  });
+
+  it("rejects a concurrent status change without writing an audit event", async () => {
+    const database = new MemoryD1();
+    database.seedTask("accepted");
+    const current = taskRow({
+      taskRef: "TASK-001",
+      status: "accepted",
+    });
+    database.tasks[0].status = "cancelled";
+
+    await expect(
+      applyTaskTransition(
+        database as unknown as D1Database,
+        current,
+        "en_route",
+        "P003",
+        "web",
+        null,
+        now,
+      ),
+    ).rejects.toThrow("concurrently");
+    expect(database.tasks[0].status).toBe("cancelled");
+    expect(database.taskEvents).toHaveLength(0);
+    expect(database.batchCalls).toBe(0);
   });
 
   it.each([

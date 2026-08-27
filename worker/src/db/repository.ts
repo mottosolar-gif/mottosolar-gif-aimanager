@@ -295,29 +295,42 @@ export async function applyTaskTransition(
     assignments.push("cancel_reason = ?");
     values.push(note);
   }
+  if (toStatus === "completed" && note !== null) {
+    assignments.push("completion_note = ?");
+    values.push(note);
+  }
 
-  values.push(current.taskRef);
-  await db.batch([
-    db
-      .prepare(`UPDATE task SET ${assignments.join(", ")} WHERE task_ref = ?`)
-      .bind(...values),
-    db
-      .prepare(
-        `INSERT INTO task_event (
-          task_ref, actor_person_code, old_status, new_status,
-          source, note, occurred_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        current.taskRef,
-        actorPersonCode,
-        current.status,
-        toStatus,
-        source,
-        note,
-        now,
-      ),
-  ]);
+  values.push(current.taskRef, current.status);
+  const updateResult = await db
+    .prepare(
+      `UPDATE task SET ${assignments.join(", ")} WHERE task_ref = ? AND status = ?`,
+    )
+    .bind(...values)
+    .run();
+
+  if ((updateResult.meta.changes ?? 0) === 0) {
+    throw new Error(
+      `task status changed concurrently: expected '${current.status}' for ${current.taskRef}, retry the transition`,
+    );
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO task_event (
+        task_ref, actor_person_code, old_status, new_status,
+        source, note, occurred_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      current.taskRef,
+      actorPersonCode,
+      current.status,
+      toStatus,
+      source,
+      note,
+      now,
+    )
+    .run();
 
   const updated = await readTaskByRef(db, current.taskRef);
   if (!updated) throw new Error("task not found after transition: " + current.taskRef);
