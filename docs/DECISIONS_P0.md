@@ -158,4 +158,32 @@ Migration `0002_task.sql` (ตาราง `task`, `task_event`, `outbound_queue
 **สรุป WP-P1-A ทั้งชุดปิดจบสมบูรณ์** — ผ่านตรวจตัวเอง + code-reviewer อิสระ + แก้ HIGH finding แล้ว
 + verified บนฐานจริงครบทุกจุดที่เคยเป็นแค่ทฤษฎี
 
-**ต่อไป: WP-P1-B** (endpoint ให้คลาวด์สั่ง vendor-ksk ส่งการ์ดจริง) — ⚠ แตะ LIVE อีกครั้ง รอคำอนุมัติแยก
+---
+
+## D-P0-10 · WP-P1-B1+B2 ปิดจบ — ครบวงจร LINE ปุ่ม → คลาวด์เปลี่ยนสถานะ → การ์ดจริงกลับ LINE (2026-08-27)
+
+**WP-P1-B1** (คลาวด์ประมวลผล postback): `worker/src/queue.ts` อ่าน `postback_data` จาก inbox → resolve
+`person_code` จาก `source_hash` → เรียก `applyTransition`. Code-reviewer อิสระพบ HIGH (ไม่มี ownership check —
+ใครก็ตัดสินใจแทนเจ้าของงานได้) → แก้ที่ `taskMachine.ts` ให้บังคับ `assigneePersonCode === actorPersonCode`
+เมื่อ `source === 'line'` แล้ว · เทสครบ (11 valid transitions + reject-unauthorized) · deploy แล้ว
+
+**WP-P1-B2** (endpoint ให้คลาวด์สั่ง vendor-ksk ส่งการ์ดจริง): สร้าง `lib/aim_notify.php` +
+`api/aim_notify.php` บน vendor-ksk LIVE (commit `5fb196c`) — ยืนยันจริงด้วยการกดปุ่มบนโทรศัพท์พี่เต้เอง
+("กดรับไปแล้ว") ครบวงจรครั้งแรก: LINE ปุ่ม → คลาวด์ → task เปลี่ยนสถานะ → การ์ดจริงกลับ LINE
+
+**ผลตรวจ code-reviewer อิสระรอบ B2 (หลัง live test):** ไม่พบ Critical/High · พบ Medium 1 + Low 1 —
+ทั้งคู่แก้แล้ว ยืนยันสด commit `a55a8ae`:
+- **Medium — type confusion → path disclosure:** cast `(string)` ตรงจาก JSON โดยไม่เช็ค `is_scalar()`
+  ก่อน ⇒ ถ้าคลาวด์ส่ง array/object จะเกิด PHP warning หลุด path เซิร์ฟเวอร์ (ยืนยันแล้วว่า `display_errors=On`
+  จริงบนเซิร์ฟเวอร์นี้ จากเคสเดิมใน `leave.php`) → เพิ่ม `is_scalar()` guard ตกเป็นค่าว่าง ชนกับเช็ค required
+  fields เดิมพอดี ไม่ต้องเพิ่ม branch ใหม่ · **VERIFIED สด:** ยิง `task_ref` เป็น array จริงผ่าน curl ตรงไป
+  `https://www.fimandksk122.com/vendor/api/aim_notify.php` → ได้ 400 สะอาด ไม่มี warning หลุด
+- **Low — log injection:** log ใช้ `$taskRef` ดิบแทนค่าที่กรองแล้ว (ฟังก์ชัน `aim_send_task_card` กรองแค่
+  ภายในตัวมันเอง ไม่ได้ส่งค่าที่กรองแล้วกลับมาให้ endpoint ใช้ log) → เพิ่มกรองซ้ำก่อน log ด้วย pattern เดียวกัน
+  · **VERIFIED สด:** ยิง `task_ref` ที่มี raw newline จริง → log บรรทัดเดียวสะอาด ไม่มี newline หลุด
+
+**WP-P1-B ทั้งชุด (B1+B2) ปิดจบสมบูรณ์** — เหลือ **WP-P1-B3** (ขยาย filter ใน `lib/aim_forward.php` ให้ forward
+postback จากแชท 1:1 ด้วย ไม่ใช่แค่ข้อความในกลุ่มทดสอบ) เป็นจิ๊กซอว์ชิ้นสุดท้ายที่ยังขาด — พิสูจน์แล้วด้วย log จริง
+ว่า postback ถึง vendor-ksk แล้วแต่ไม่ถึงคลาวด์ เพราะ filter เดิมกรองทิ้ง
+
+**ต่อไป: WP-P1-B3** — ⚠ แตะ LIVE อีกครั้ง รอคำอนุมัติแยก
