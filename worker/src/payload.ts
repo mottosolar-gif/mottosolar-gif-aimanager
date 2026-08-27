@@ -43,7 +43,7 @@ function asRecord(value: unknown, label: string): JsonRecord {
 }
 
 function requiredToken(value: unknown, label: string, allowed?: Set<string>): string {
-  if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(value)) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)) {
     throw new InvalidPayloadError(`${label} is missing or malformed`);
   }
   if (allowed && !allowed.has(value)) {

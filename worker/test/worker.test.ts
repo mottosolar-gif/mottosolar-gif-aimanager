@@ -320,6 +320,19 @@ describe("aim-ingest Worker", () => {
     expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(privateText);
   });
 
+  it("accepts a webhookEventId starting with a digit (real LINE ULID shape)", async () => {
+    const database = new MemoryD1();
+    const payload = validPayload("01HZZZTESTULIDSTARTWITHDIGIT0");
+
+    const response = await handleRequest(
+      ingestRequest(JSON.stringify(payload)),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: 1 });
+  });
+
   it("returns 403 and writes nothing when the shared header is wrong", async () => {
     const database = new MemoryD1();
     const wrongResponse = await handleRequest(
