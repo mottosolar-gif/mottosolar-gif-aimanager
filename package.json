@@ -14,12 +14,15 @@
     "db:migrate:remote": "wrangler d1 migrations apply aim-db --remote --config worker/wrangler.toml",
     "deploy": "wrangler deploy --config worker/wrangler.toml",
     "dev": "wrangler dev --config worker/wrangler.local.toml",
+    "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",
+    "eslint": "^9.39.5",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^3.0.9",
     "wrangler": "^4.126.0"
   }
