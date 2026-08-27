@@ -65,6 +65,11 @@ class MemoryD1 {
   inboxEvents: StoredInbox[] = [];
   jobs: StoredJob[] = [];
   ledgerRows: StoredLedger[] = [];
+  failDoneUpdateOnce = false;
+
+  failNextDoneUpdate(): void {
+    this.failDoneUpdateOnce = true;
+  }
 
   seedJob(options: {
     eventId: string;
@@ -163,11 +168,11 @@ class MemoryD1 {
         return result([], duplicate ? 0 : 1);
       }
       if (/SELECT id, event_id, kind, attempts/i.test(statement.query)) {
-        const [now] = statement.values;
+        const [now, limit] = statement.values;
         const rows = this.jobs
           .filter((job) => job.status === "pending" && job.next_run_at <= String(now))
           .sort((left, right) => left.next_run_at.localeCompare(right.next_run_at))
-          .slice(0, 10)
+          .slice(0, Number(limit))
           .map(({ id, event_id, kind, attempts }) => ({
             id,
             event_id,
@@ -185,6 +190,10 @@ class MemoryD1 {
         return result([], job ? 1 : 0);
       }
       if (/UPDATE job_queue SET status = 'done'/i.test(statement.query)) {
+        if (this.failDoneUpdateOnce) {
+          this.failDoneUpdateOnce = false;
+          throw new Error("simulated completeJob failure");
+        }
         const [jobId] = statement.values;
         const job = this.jobs.find((row) => row.id === Number(jobId));
         if (job) job.status = "done";
@@ -469,6 +478,39 @@ describe("scheduled queue processing", () => {
         action_type: "line_event_processed",
         outcome: "ok",
         reference_id: "evt-ready",
+      }),
+    );
+  });
+
+  it("resolves a job to retry even when completeJob itself throws, and still records the cron tick", async () => {
+    const database = new MemoryD1();
+    const job = database.seedJob({
+      eventId: "evt-complete-failure",
+      kind: "line_event",
+      status: "pending",
+      attempts: 0,
+      nextRunAt: "2026-08-27T07:59:00.000Z",
+    });
+    database.failNextDoneUpdate();
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 0, retried: 1, dead: 0 });
+    expect(job.status).toBe("pending");
+    expect(job.attempts).toBe(1);
+    expect(Date.parse(job.next_run_at)).toBeGreaterThan(Date.parse(now));
+    expect(database.ledgerRows).toContainEqual(
+      expect.objectContaining({
+        action_type: "line_event_processed",
+        outcome: "retry",
+        reference_id: "evt-complete-failure",
+      }),
+    );
+    expect(database.ledgerRows).toContainEqual(
+      expect.objectContaining({
+        action_type: "cron_tick",
+        outcome: "ok",
+        reference_id: "0",
       }),
     );
   });

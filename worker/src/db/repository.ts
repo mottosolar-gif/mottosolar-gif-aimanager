@@ -27,7 +27,7 @@ const selectPendingJobsSql = `
   FROM job_queue
   WHERE status = 'pending' AND next_run_at <= ?
   ORDER BY next_run_at ASC
-  LIMIT 10
+  LIMIT ?
 `;
 
 const insertLedgerSql = `
@@ -101,10 +101,11 @@ export async function readHealth(db: D1Database): Promise<{
 export async function readPendingJobs(
   db: D1Database,
   now: string,
+  limit: number,
 ): Promise<PendingJob[]> {
   const query = await db
     .prepare(selectPendingJobsSql)
-    .bind(now)
+    .bind(now, limit)
     .all<{ id: number; event_id: string; kind: string; attempts: number }>();
   return query.results.map((row) => ({
     id: row.id,
