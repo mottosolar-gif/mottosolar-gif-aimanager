@@ -140,3 +140,22 @@ cron แยกยิงออกไป แทนการยิง HTTP ตร�
 
 **บทเรียนสำหรับ P0-6/เฟสถัดไป:** เทสที่ auto-generate ค่าจำลองเองต้องสุ่มให้ครอบคลุมรูปแบบขอบเขตจริงด้วย
 (เช่น ขึ้นต้นด้วยตัวเลข/ตัวอักษรสลับกัน) ไม่ใช่ยึดรูปแบบเดียวที่สะดวกกับผู้เขียนเทส
+
+---
+
+## D-P0-09 · WP-P1-A1..A3 deploy จริงสำเร็จ + ยืนยัน FK/CHECK บน D1 จริง (2026-08-27)
+
+Migration `0002_task.sql` (ตาราง `task`, `task_event`, `outbound_queue`) apply ขึ้น `aim-db` จริงแล้ว (8 commands)
+
+**ปิดข้อสงสัย MEDIUM ที่ code-reviewer ทิ้งไว้เป็น INFERRED:**
+- **FK enforcement บน D1 จริง — VERIFIED:** ยิง `INSERT INTO task_event` ที่ `task_ref` ไม่มีอยู่จริง →
+  D1 ตอบ `SQLITE_CONSTRAINT_FOREIGNKEY` ทันที ⇒ D1 บังคับ foreign key จริง ไม่ใช่แค่ syntax เฉยๆ
+- **CHECK constraint บน D1 จริง — VERIFIED:** ยิง `INSERT INTO task ... status='bogus'` →
+  D1 ตอบ `SQLITE_CONSTRAINT_CHECK` ทันที
+
+ทดสอบสร้าง/ลบ task จริงบนฐาน production สำเร็จ (ลบข้อมูลทดสอบออกแล้ว ไม่เหลือค้าง)
+
+**สรุป WP-P1-A ทั้งชุดปิดจบสมบูรณ์** — ผ่านตรวจตัวเอง + code-reviewer อิสระ + แก้ HIGH finding แล้ว
++ verified บนฐานจริงครบทุกจุดที่เคยเป็นแค่ทฤษฎี
+
+**ต่อไป: WP-P1-B** (endpoint ให้คลาวด์สั่ง vendor-ksk ส่งการ์ดจริง) — ⚠ แตะ LIVE อีกครั้ง รอคำอนุมัติแยก
