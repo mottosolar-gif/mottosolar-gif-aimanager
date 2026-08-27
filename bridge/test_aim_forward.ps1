@@ -35,8 +35,10 @@ Assert-True ($source -notmatch '(?m)^\s*function\s+aim_forward_events\s*\([^)]*\
 Assert-True ($source -notmatch 'function\s+aim_forward_events\s*\([^)]*(int|string|float|bool|array|callable)\s+\$') 'No scalar parameter type declaration'
 Assert-True ($source -match 'CURLOPT_TIMEOUT_MS\s*=>\s*1500') 'Request timeout is 1500 ms'
 Assert-True ($source -match 'CURLOPT_CONNECTTIMEOUT_MS\s*=>\s*1500') 'Connect timeout is 1500 ms'
-$emptyGroupGuard = [regex]::Escape("if (`$testGroupId === '') return;")
-Assert-True ($source -match $emptyGroupGuard) 'Empty test_group_id stops forwarding'
+$scopedGroupGuard = [regex]::Escape("if (`$testGroupId !== '') {")
+Assert-True ($source -match $scopedGroupGuard) 'Empty test_group_id stops ONLY the group-message path (WP-P1-B3 fix: postback path stays independent - code-reviewer finding #1)'
+$groupIdScalarGuard = [regex]::Escape("isset(`$ev['source']['groupId']) && is_scalar(`$ev['source']['groupId'])")
+Assert-True ($source -match $groupIdScalarGuard) 'groupId cast is_scalar-guarded too, consistent with the two new fields (code-reviewer finding #2)'
 
 $curlCalls = [regex]::Matches($source, '(?m)(?<![A-Za-z0-9_])(@?)curl_(init|setopt_array|setopt|exec|getinfo|close)\s*\(')
 Assert-True ($curlCalls.Count -eq 6) 'Found all 6 expected curl calls'
@@ -50,5 +52,13 @@ foreach ($logCall in $logCalls) {
     $argument = $logCall.Groups[1].Value
     Assert-True ($argument -notmatch '\$(events|ev|payload|gid|testGroupId)\b') 'Log call contains no event content (event count is allowed)'
 }
+
+$postbackTypeGuard = [regex]::Escape("`$evType === 'postback'")
+Assert-True ($source -match $postbackTypeGuard) 'New branch gated on postback event type ($evType check)'
+$scalarGuard = [regex]::Escape("is_scalar(`$ev['postback']['data'])")
+Assert-True ($source -match $scalarGuard) 'Postback data type-checked with is_scalar before cast (defense against type-confusion warning)'
+$prefixGuard = [regex]::Escape("strpos(`$pbData, 'act=aim_') === 0")
+Assert-True ($source -match $prefixGuard) 'Postback filter anchors act=aim_ prefix at string start (not loose substring search)'
+Assert-True ($source -match 'continue;') 'Group-match branch short-circuits to avoid duplicate forwarding when a postback also matches the test group'
 
 Write-Output 'PASS: static safety checks completed.'
