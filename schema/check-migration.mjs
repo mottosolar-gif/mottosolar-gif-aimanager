@@ -22,9 +22,12 @@ try {
     "inbox_event",
     "job_queue",
     "ledger",
+    "outbound_queue",
     "person",
     "person_link",
     "sync_state",
+    "task",
+    "task_event",
   ];
   const actualTables = database
     .prepare(

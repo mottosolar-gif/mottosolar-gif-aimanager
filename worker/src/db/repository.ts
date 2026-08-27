@@ -200,3 +200,126 @@ export async function recordCronTick(
     .bind("cron_tick", "ok", String(processed), now, now)
     .run();
 }
+
+type TaskRow = import("../taskMachine.ts").TaskRow;
+
+interface TaskDatabaseRow {
+  id: number;
+  task_ref: string;
+  title: string;
+  description: string | null;
+  status: string;
+  assignee_person_code: string | null;
+  creator_person_code: string | null;
+  priority: string;
+  scheduled_at: string | null;
+  due_at: string | null;
+  location_text: string | null;
+  location_lat: number | null;
+  location_lng: number | null;
+  accepted_at: string | null;
+  started_at: string | null;
+  arrived_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  completion_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapTaskRow(row: TaskDatabaseRow): TaskRow {
+  return {
+    id: row.id,
+    taskRef: row.task_ref,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    assigneePersonCode: row.assignee_person_code,
+    creatorPersonCode: row.creator_person_code,
+    priority: row.priority,
+    scheduledAt: row.scheduled_at,
+    dueAt: row.due_at,
+    locationText: row.location_text,
+    locationLat: row.location_lat,
+    locationLng: row.location_lng,
+    acceptedAt: row.accepted_at,
+    startedAt: row.started_at,
+    arrivedAt: row.arrived_at,
+    completedAt: row.completed_at,
+    cancelledAt: row.cancelled_at,
+    cancelReason: row.cancel_reason,
+    completionNote: row.completion_note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function readTaskByRef(
+  db: D1Database,
+  taskRef: string,
+): Promise<TaskRow | null> {
+  const query = await db
+    .prepare("SELECT * FROM task WHERE task_ref = ?")
+    .bind(taskRef)
+    .all<TaskDatabaseRow>();
+  const row = query.results[0];
+  return row ? mapTaskRow(row) : null;
+}
+
+export async function applyTaskTransition(
+  db: D1Database,
+  current: TaskRow,
+  toStatus: string,
+  actorPersonCode: string | null,
+  source: string,
+  note: string | null,
+  now: string,
+): Promise<TaskRow> {
+  const assignments = ["status = ?", "updated_at = ?"];
+  const values: unknown[] = [toStatus, now];
+
+  const timestampColumn: Partial<Record<string, string>> = {
+    accepted: "accepted_at",
+    en_route: "started_at",
+    arrived: "arrived_at",
+    completed: "completed_at",
+    cancelled: "cancelled_at",
+  };
+  const column = timestampColumn[toStatus];
+  if (column) {
+    assignments.push(`${column} = ?`);
+    values.push(now);
+  }
+  if (toStatus === "cancelled" && note !== null) {
+    assignments.push("cancel_reason = ?");
+    values.push(note);
+  }
+
+  values.push(current.taskRef);
+  await db.batch([
+    db
+      .prepare(`UPDATE task SET ${assignments.join(", ")} WHERE task_ref = ?`)
+      .bind(...values),
+    db
+      .prepare(
+        `INSERT INTO task_event (
+          task_ref, actor_person_code, old_status, new_status,
+          source, note, occurred_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        current.taskRef,
+        actorPersonCode,
+        current.status,
+        toStatus,
+        source,
+        note,
+        now,
+      ),
+  ]);
+
+  const updated = await readTaskByRef(db, current.taskRef);
+  if (!updated) throw new Error("task not found after transition: " + current.taskRef);
+  return updated;
+}
