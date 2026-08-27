@@ -2,6 +2,7 @@ import { constantTimeEqual, sha256Bytes } from "./crypto.ts";
 import { enqueueEvents, readHealth } from "./db/repository.ts";
 import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
+import { processQueue } from "./queue.ts";
 import type { Env } from "./types.ts";
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -151,8 +152,21 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   );
 }
 
+export async function handleScheduled(env: Env, now: string): Promise<void> {
+  const result = await processQueue(env.DB, now);
+  log(now, "cron", "tick", String(result.processed));
+}
+
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handleRequest(request, env);
+  },
+  scheduled(
+    controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): void {
+    const now = new Date(controller.scheduledTime).toISOString();
+    ctx.waitUntil(handleScheduled(env, now));
   },
 } satisfies ExportedHandler<Env>;

@@ -10,3 +10,5 @@ database_name = "aim-db"
 database_id = "__CLOUDFLARE_D1_DATABASE_ID__"
 migrations_dir = "../schema/migrations"
 
+[triggers]
+crons = ["*/1 * * * *"]

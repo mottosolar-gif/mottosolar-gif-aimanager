@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../src/index.ts";
+import { processQueue } from "../src/queue.ts";
 import type { Env } from "../src/types.ts";
 
 interface StoredInbox {
@@ -12,14 +13,29 @@ interface StoredInbox {
   received_at: string;
   payload_bytes: number;
   payload_sha256: string;
+  status: string;
   body_ref: null;
 }
 
 interface StoredJob {
+  id: number;
   event_id: string;
+  kind: string;
   idem_key: string;
   status: string;
+  attempts: number;
+  next_run_at: string;
   event_occurred_at: string;
+  last_error: string | null;
+  created_at: string;
+}
+
+interface StoredLedger {
+  action_type: string;
+  outcome: string;
+  reference_id: string | null;
+  actor_code: null;
+  occurred_at: string;
   created_at: string;
 }
 
@@ -35,20 +51,68 @@ class MemoryStatement {
     this.values = values;
     return this as unknown as D1PreparedStatement;
   }
+
+  async all<T>(): Promise<D1Result<T>> {
+    return this.database.execute(this) as D1Result<T>;
+  }
+
+  async run(): Promise<D1Result> {
+    return this.database.execute(this);
+  }
 }
 
 class MemoryD1 {
   inboxEvents: StoredInbox[] = [];
   jobs: StoredJob[] = [];
+  ledgerRows: StoredLedger[] = [];
+
+  seedJob(options: {
+    eventId: string;
+    kind: string;
+    status: string;
+    attempts: number;
+    nextRunAt: string;
+  }): StoredJob {
+    const job: StoredJob = {
+      id: this.jobs.reduce((max, row) => Math.max(max, row.id), 0) + 1,
+      event_id: options.eventId,
+      kind: options.kind,
+      idem_key: options.eventId,
+      status: options.status,
+      attempts: options.attempts,
+      next_run_at: options.nextRunAt,
+      event_occurred_at: options.nextRunAt,
+      last_error: null,
+      created_at: options.nextRunAt,
+    };
+    this.inboxEvents.push({
+      event_id: options.eventId,
+      event_type: "message",
+      message_type: "text",
+      source_type: "group",
+      source_hash: "a".repeat(64),
+      occurred_at: options.nextRunAt,
+      received_at: options.nextRunAt,
+      payload_bytes: 1,
+      payload_sha256: "b".repeat(64),
+      status: "pending",
+      body_ref: null,
+    });
+    this.jobs.push(job);
+    return job;
+  }
 
   prepare(query: string): D1PreparedStatement {
     return new MemoryStatement(this, query) as unknown as D1PreparedStatement;
   }
 
   async batch(statements: D1PreparedStatement[]): Promise<D1Result[]> {
-    const results: D1Result[] = [];
-    for (const rawStatement of statements) {
-      const statement = rawStatement as unknown as MemoryStatement;
+    return statements.map((statement) =>
+      this.execute(statement as unknown as MemoryStatement),
+    );
+  }
+
+  execute(statement: MemoryStatement): D1Result {
       if (/INSERT OR IGNORE INTO inbox_event/i.test(statement.query)) {
         const [
           eventId,
@@ -73,39 +137,106 @@ class MemoryD1 {
             received_at: String(receivedAt),
             payload_bytes: Number(payloadBytes),
             payload_sha256: String(payloadSha256),
+            status: "pending",
             body_ref: null,
           });
         }
-        results.push(result([], duplicate ? 0 : 1));
-        continue;
+        return result([], duplicate ? 0 : 1);
       }
       if (/INSERT OR IGNORE INTO job_queue/i.test(statement.query)) {
         const [eventId, nextRunAt, idemKey, eventOccurredAt, createdAt] = statement.values;
         const duplicate = this.jobs.some((row) => row.idem_key === idemKey);
         if (!duplicate) {
           this.jobs.push({
+            id: this.jobs.reduce((max, row) => Math.max(max, row.id), 0) + 1,
             event_id: String(eventId),
+            kind: "line_event",
             idem_key: String(idemKey),
             status: "pending",
+            attempts: 0,
+            next_run_at: String(nextRunAt),
             event_occurred_at: String(eventOccurredAt),
+            last_error: null,
             created_at: String(createdAt ?? nextRunAt),
           });
         }
-        results.push(result([], duplicate ? 0 : 1));
-        continue;
+        return result([], duplicate ? 0 : 1);
+      }
+      if (/SELECT id, event_id, kind, attempts/i.test(statement.query)) {
+        const [now] = statement.values;
+        const rows = this.jobs
+          .filter((job) => job.status === "pending" && job.next_run_at <= String(now))
+          .sort((left, right) => left.next_run_at.localeCompare(right.next_run_at))
+          .slice(0, 10)
+          .map(({ id, event_id, kind, attempts }) => ({
+            id,
+            event_id,
+            kind,
+            attempts,
+          }));
+        return result(rows);
+      }
+      if (/SET status = 'processing'.*status = 'pending'/is.test(statement.query)) {
+        const [jobId] = statement.values;
+        const job = this.jobs.find(
+          (row) => row.id === Number(jobId) && row.status === "pending",
+        );
+        if (job) job.status = "processing";
+        return result([], job ? 1 : 0);
+      }
+      if (/UPDATE job_queue SET status = 'done'/i.test(statement.query)) {
+        const [jobId] = statement.values;
+        const job = this.jobs.find((row) => row.id === Number(jobId));
+        if (job) job.status = "done";
+        return result([], job ? 1 : 0);
+      }
+      if (/UPDATE inbox_event SET status = 'done'/i.test(statement.query)) {
+        const [eventId] = statement.values;
+        const event = this.inboxEvents.find((row) => row.event_id === String(eventId));
+        if (event) event.status = "done";
+        return result([], event ? 1 : 0);
+      }
+      if (/SET status = 'pending', attempts = \?/is.test(statement.query)) {
+        const [attempts, nextRunAt, lastError, jobId] = statement.values;
+        const job = this.jobs.find((row) => row.id === Number(jobId));
+        if (job) {
+          job.status = "pending";
+          job.attempts = Number(attempts);
+          job.next_run_at = String(nextRunAt);
+          job.last_error = String(lastError);
+        }
+        return result([], job ? 1 : 0);
+      }
+      if (/SET status = 'dead', attempts = \?/is.test(statement.query)) {
+        const [attempts, lastError, jobId] = statement.values;
+        const job = this.jobs.find((row) => row.id === Number(jobId));
+        if (job) {
+          job.status = "dead";
+          job.attempts = Number(attempts);
+          job.last_error = String(lastError);
+        }
+        return result([], job ? 1 : 0);
+      }
+      if (/INSERT INTO ledger/i.test(statement.query)) {
+        const [actionType, outcome, referenceId, occurredAt, createdAt] = statement.values;
+        this.ledgerRows.push({
+          action_type: String(actionType),
+          outcome: String(outcome),
+          reference_id: referenceId === null ? null : String(referenceId),
+          actor_code: null,
+          occurred_at: String(occurredAt),
+          created_at: String(createdAt),
+        });
+        return result([], 1);
       }
       if (/COUNT\(\*\) AS depth/i.test(statement.query)) {
-        results.push(result([{ depth: this.jobs.filter((job) => job.status === "pending").length }]));
-        continue;
+        return result([{ depth: this.jobs.filter((job) => job.status === "pending").length }]);
       }
       if (/MAX\(received_at\)/i.test(statement.query)) {
         const times = this.inboxEvents.map((row) => row.received_at).sort();
-        results.push(result([{ last_ingest_at: times.at(-1) ?? null }]));
-        continue;
+        return result([{ last_ingest_at: times.at(-1) ?? null }]);
       }
       throw new Error("Test D1 received an unsupported statement");
-    }
-    return results;
   }
 }
 
@@ -293,5 +424,150 @@ describe("aim-ingest Worker", () => {
     expect(response.status).toBe(400);
     expect(database.inboxEvents).toHaveLength(0);
     expect(database.jobs).toHaveLength(0);
+  });
+});
+
+describe("scheduled queue processing", () => {
+  const now = "2026-08-27T08:00:00.000Z";
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  it("processes zero jobs but still writes a cron_tick ledger row", async () => {
+    const database = new MemoryD1();
+
+    await expect(
+      processQueue(database as unknown as D1Database, now),
+    ).resolves.toEqual({ processed: 0, retried: 0, dead: 0 });
+    expect(database.ledgerRows).toEqual([
+      expect.objectContaining({
+        action_type: "cron_tick",
+        outcome: "ok",
+        reference_id: "0",
+      }),
+    ]);
+  });
+
+  it("completes a pending line_event job and marks inbox_event done", async () => {
+    const database = new MemoryD1();
+    const job = database.seedJob({
+      eventId: "evt-ready",
+      kind: "line_event",
+      status: "pending",
+      attempts: 0,
+      nextRunAt: "2026-08-27T07:59:00.000Z",
+    });
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 1, retried: 0, dead: 0 });
+    expect(job.status).toBe("done");
+    expect(database.inboxEvents[0].status).toBe("done");
+    expect(database.ledgerRows).toContainEqual(
+      expect.objectContaining({
+        action_type: "line_event_processed",
+        outcome: "ok",
+        reference_id: "evt-ready",
+      }),
+    );
+  });
+
+  it("claims a job atomically so two concurrent ticks never double-process it", async () => {
+    const database = new MemoryD1();
+    database.seedJob({
+      eventId: "evt-race",
+      kind: "line_event",
+      status: "pending",
+      attempts: 0,
+      nextRunAt: "2026-08-27T07:59:00.000Z",
+    });
+
+    const results = await Promise.all([
+      processQueue(database as unknown as D1Database, now),
+      processQueue(database as unknown as D1Database, now),
+    ]);
+
+    expect(results.reduce((sum, item) => sum + item.processed, 0)).toBe(1);
+    expect(
+      database.ledgerRows.filter(
+        (row) => row.action_type === "line_event_processed" && row.outcome === "ok",
+      ),
+    ).toHaveLength(1);
+    expect(database.jobs[0].status).toBe("done");
+  });
+
+  it("retries an unrecognized job kind with exponential backoff", async () => {
+    const database = new MemoryD1();
+    const job = database.seedJob({
+      eventId: "evt-retry",
+      kind: "something_unknown",
+      status: "pending",
+      attempts: 0,
+      nextRunAt: "2026-08-27T07:59:00.000Z",
+    });
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 0, retried: 1, dead: 0 });
+    expect(job.status).toBe("pending");
+    expect(job.attempts).toBe(1);
+    const retryDelayMs = Date.parse(job.next_run_at) - Date.parse(now);
+    expect(retryDelayMs).toBeGreaterThanOrEqual(29_000);
+    expect(retryDelayMs).toBeLessThanOrEqual(31_000);
+    expect(job.last_error).toContain("unknown job kind");
+    expect(database.ledgerRows).toContainEqual(
+      expect.objectContaining({
+        action_type: "line_event_processed",
+        outcome: "retry",
+        reference_id: "evt-retry",
+      }),
+    );
+  });
+
+  it("kills a job after the fifth failed attempt", async () => {
+    const database = new MemoryD1();
+    const job = database.seedJob({
+      eventId: "evt-dead",
+      kind: "something_unknown",
+      status: "pending",
+      attempts: 4,
+      nextRunAt: "2026-08-27T07:59:00.000Z",
+    });
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 0, retried: 0, dead: 1 });
+    expect(job.status).toBe("dead");
+    expect(job.attempts).toBe(5);
+    expect(database.ledgerRows).toContainEqual(
+      expect.objectContaining({
+        action_type: "line_event_processed",
+        outcome: "dead",
+        reference_id: "evt-dead",
+      }),
+    );
+  });
+
+  it("does not pick up a job scheduled in the future", async () => {
+    const database = new MemoryD1();
+    const job = database.seedJob({
+      eventId: "evt-future",
+      kind: "line_event",
+      status: "pending",
+      attempts: 0,
+      nextRunAt: "2026-08-27T09:00:00.000Z",
+    });
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 0, retried: 0, dead: 0 });
+    expect(job.status).toBe("pending");
+    expect(job.attempts).toBe(0);
+    expect(
+      database.ledgerRows.filter(
+        (row) => row.action_type === "line_event_processed",
+      ),
+    ).toHaveLength(0);
   });
 });

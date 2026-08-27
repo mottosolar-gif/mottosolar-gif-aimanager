@@ -1,5 +1,12 @@
 import type { EventMetadata, IngestResult } from "../types.ts";
 
+export interface PendingJob {
+  id: number;
+  eventId: string;
+  kind: string;
+  attempts: number;
+}
+
 const insertInboxSql = `
   INSERT OR IGNORE INTO inbox_event (
     event_id, event_type, message_type, source_type, source_hash,
@@ -13,6 +20,20 @@ const insertJobSql = `
     event_id, kind, status, attempts, next_run_at, idem_key,
     event_occurred_at, last_error, created_at
   ) VALUES (?, 'line_event', 'pending', 0, ?, ?, ?, NULL, ?)
+`;
+
+const selectPendingJobsSql = `
+  SELECT id, event_id, kind, attempts
+  FROM job_queue
+  WHERE status = 'pending' AND next_run_at <= ?
+  ORDER BY next_run_at ASC
+  LIMIT 10
+`;
+
+const insertLedgerSql = `
+  INSERT INTO ledger (
+    action_type, outcome, reference_id, actor_code, occurred_at, created_at
+  ) VALUES (?, ?, ?, NULL, ?, ?)
 `;
 
 export async function enqueueEvents(
@@ -75,4 +96,106 @@ export async function readHealth(db: D1Database): Promise<{
     queueDepth: Number(queueRow?.depth ?? 0),
     lastIngestAt: ingestRow?.last_ingest_at ?? null,
   };
+}
+
+export async function readPendingJobs(
+  db: D1Database,
+  now: string,
+): Promise<PendingJob[]> {
+  const query = await db
+    .prepare(selectPendingJobsSql)
+    .bind(now)
+    .all<{ id: number; event_id: string; kind: string; attempts: number }>();
+  return query.results.map((row) => ({
+    id: row.id,
+    eventId: row.event_id,
+    kind: row.kind,
+    attempts: row.attempts,
+  }));
+}
+
+export async function claimPendingJob(
+  db: D1Database,
+  jobId: number,
+): Promise<boolean> {
+  const claimed = await db
+    .prepare(
+      "UPDATE job_queue SET status = 'processing' WHERE id = ? AND status = 'pending'",
+    )
+    .bind(jobId)
+    .run();
+  return (claimed.meta.changes ?? 0) > 0;
+}
+
+export async function completeJob(
+  db: D1Database,
+  jobId: number,
+  eventId: string,
+  now: string,
+): Promise<void> {
+  await db.batch([
+    db.prepare("UPDATE job_queue SET status = 'done' WHERE id = ?").bind(jobId),
+    db
+      .prepare("UPDATE inbox_event SET status = 'done' WHERE event_id = ?")
+      .bind(eventId),
+    db
+      .prepare(insertLedgerSql)
+      .bind("line_event_processed", "ok", eventId, now, now),
+  ]);
+}
+
+export async function retryJob(
+  db: D1Database,
+  jobId: number,
+  eventId: string,
+  attempts: number,
+  nextRunAt: string,
+  errorMessage: string,
+  now: string,
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE job_queue
+         SET status = 'pending', attempts = ?, next_run_at = ?, last_error = ?
+         WHERE id = ?`,
+      )
+      .bind(attempts, nextRunAt, errorMessage, jobId),
+    db
+      .prepare(insertLedgerSql)
+      .bind("line_event_processed", "retry", eventId, now, now),
+  ]);
+}
+
+export async function killJob(
+  db: D1Database,
+  jobId: number,
+  eventId: string,
+  attempts: number,
+  errorMessage: string,
+  now: string,
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE job_queue
+         SET status = 'dead', attempts = ?, last_error = ?
+         WHERE id = ?`,
+      )
+      .bind(attempts, errorMessage, jobId),
+    db
+      .prepare(insertLedgerSql)
+      .bind("line_event_processed", "dead", eventId, now, now),
+  ]);
+}
+
+export async function recordCronTick(
+  db: D1Database,
+  processed: number,
+  now: string,
+): Promise<void> {
+  await db
+    .prepare(insertLedgerSql)
+    .bind("cron_tick", "ok", String(processed), now, now)
+    .run();
 }
