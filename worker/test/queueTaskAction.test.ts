@@ -297,7 +297,7 @@ describe("LINE postback task actions", () => {
       postbackData: "act=aim_accept&task=T-001",
       sourceHash,
     });
-    database.personLinks.push({ person_code: "P-LINE", source_hash: sourceHash });
+    database.personLinks.push({ person_code: "P001", source_hash: sourceHash });
 
     const queueResult = await processQueue(database as unknown as D1Database, now);
 
@@ -307,12 +307,31 @@ describe("LINE postback task actions", () => {
     expect(database.taskEvents).toContainEqual(
       expect.objectContaining({
         task_ref: "T-001",
-        actor_person_code: "P-LINE",
+        actor_person_code: "P001",
         old_status: "assigned",
         new_status: "accepted",
         source: "line",
       }),
     );
+  });
+
+  it("rejects a postback from someone who is not the task's assignee", async () => {
+    const database = new MemoryD1();
+    const task = database.seedTask("assigned");
+    const job = database.seedEvent({
+      eventId: "evt-wrong-assignee",
+      postbackData: "act=aim_accept&task=T-001",
+      sourceHash,
+    });
+    database.personLinks.push({ person_code: "P-LINE", source_hash: sourceHash });
+
+    const queueResult = await processQueue(database as unknown as D1Database, now);
+
+    expect(queueResult).toEqual({ processed: 0, retried: 1, dead: 0 });
+    expect(task.status).toBe("assigned");
+    expect(database.taskEvents).toHaveLength(0);
+    expect(job.status).toBe("pending");
+    expect(job.last_error).toContain("not authorized");
   });
 
   it("retries an AIM postback from an unlinked person and records cron_tick", async () => {
@@ -344,7 +363,7 @@ describe("LINE postback task actions", () => {
       sourceHash,
       attempts: 4,
     });
-    database.personLinks.push({ person_code: "P-LINE", source_hash: sourceHash });
+    database.personLinks.push({ person_code: "P001", source_hash: sourceHash });
 
     const queueResult = await processQueue(database as unknown as D1Database, now);
 

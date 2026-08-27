@@ -79,6 +79,13 @@ export async function applyTransition(
 ): Promise<TaskRow> {
   const current = await readTaskByRef(db, taskRef);
   if (!current) throw new Error("task not found: " + taskRef);
+
+  if (source === "line" && current.assigneePersonCode !== actorPersonCode) {
+    throw new Error(
+      `actor not authorized for task ${taskRef}: expected assignee '${current.assigneePersonCode ?? "none"}', got '${actorPersonCode ?? "none"}'`,
+    );
+  }
+
   if (!isValidTransition(current.status, toStatus)) {
     throw new Error(
       `invalid transition: cannot go from '${current.status}' to '${toStatus}'`,
