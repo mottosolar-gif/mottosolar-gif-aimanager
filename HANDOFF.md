@@ -79,3 +79,41 @@ Privacy guard passed (schema-only); checked 1 migration file(s).
 - **VERIFIED:** ยังไม่ได้ stage หรือ commit เพราะ sandbox ปฏิเสธการสร้าง `.git/index.lock`
 - **VERIFIED:** ยังไม่ได้รัน `npm run db:migrate:local` หรือ `npm run privacy:check:local` เพราะไม่อยู่ในคำสั่งรอบนี้
 - **VERIFIED:** ยังไม่ได้ใช้ groupId กลุ่มทดสอบ; เรื่องนี้อยู่ใน WP-P0-5 ซึ่งยังห้ามทำ
+
+## แก้บั๊ก db-dump/privacy-guard บน Windows (2026-08-27 — ตรวจโดยผู้ตรวจอิสระ)
+
+**บั๊กที่พบระหว่าง WP-P0-6 (deploy จริง + ทดสอบด้วยมือ):**
+- `worker/scripts/db-dump.mjs` และ `schema/privacy-guard.mjs` เรียก `spawnSync('npx.cmd', [...])`
+  โดยไม่ใส่ `{ shell: true }` → บน Windows ล้มเหลวด้วย `EINVAL` เงียบ ๆ (`result.error` ไม่ถูกเช็ค)
+  ทำให้ error message ที่โยนออกมาไม่มีรายละเอียดจริงเลย ("Wrangler returned no detail")
+
+**วิธีแก้ (VERIFIED — ทดสอบจริงบนเครื่องนี้แล้ว):**
+resolve path ของ wrangler CLI ตรงผ่าน `createRequire` + `require.resolve('wrangler/package.json')`
+แล้วเรียกด้วย `spawnSync(process.execPath, [wranglerBin, ...args])` — ไม่ต้องพึ่ง shell เลย
+ปลอดภัยกว่า `shell: true` (ไม่มีความเสี่ยง command injection) และทำงานข้ามแพลตฟอร์ม
+เพิ่มการเช็ค `result.error` แยกจาก `result.status !== 0` ในทั้งสองไฟล์
+
+**ผลทดสอบจริงหลังแก้ (รันโดยผู้ตรวจอิสระ ไม่ใช่ผู้เขียนโค้ด):**
+```
+$ npm run typecheck        → ผ่าน
+$ npm test                 → 7/7 ผ่าน
+$ npm run db:dump          → "D1 remote dump written to dumps/....sql" (ไฟล์ 83 บรรทัด สคีมาครบ)
+$ npm run privacy:check:remote → "Privacy guard passed (remote); checked 1 migration file(s)."
+```
+
+⚠ หมายเหตุ: รอบแรกที่รัน `db:dump` เจอ wrangler subprocess crash เอง (`0xc0000005 access violation`)
+**หลังจากที่มันเขียนไฟล์ dump เสร็จแล้ว** — เป็นความไม่เสถียรของตัว wrangler บน Windows เอง
+ไม่เกี่ยวกับวิธี spawn ที่แก้ (ลองซ้ำผ่านสะอาด) — ไฟล์ dump ที่ได้ทั้งสองรอบสมบูรณ์ถูกต้อง
+
+## สรุปผล WP-P0-6 (ประตูปิดเฟส) — ทดสอบกับของจริงบน Cloudflare ครบ
+
+1. ✅ พิมพ์ event ทดสอบ → เข้าคิว/ledger ของคลาวด์ (ยิงตรงผ่าน curl แทนกลุ่มทดสอบจริง เพราะยังไม่มี groupId)
+2. ✅ ยิงซ้ำ 3 ครั้ง → `queueDepth` คงที่ที่ 1, `duplicates:1` ทุกครั้งหลังครั้งแรก
+3. ✅ ปิด header ลับ → 403 เสมอ
+4. ⏳ ปิด cim-server แล้ว cloud ยังเดิน — ยังทดสอบไม่ได้จนกว่าจะมี WP-P0-4 (Cron)
+5. ✅ `npm run db:dump` ดึงข้อมูลกลับมาเก็บที่เครื่องได้จริง
+6. ✅ ตรวจฐานจริงด้วย `wrangler d1 execute` ตรง: ไม่มีข้อความ/PII ใด ๆ หลุดเข้าฐาน, `body_ref` เป็น NULL ทุกแถว, `source_hash` เป็นแฮชไม่ใช่ userId ดิบ
+7. ⏳ รอ code-reviewer ตรวจรอบสุดท้าย
+
+**Worker ที่ deploy จริง:** `https://aim-ingest.mottosolar.workers.dev` · ฐาน `aim-db` (region APAC)
+**ยืนยันแล้วว่าไม่กระทบ `mottosolar-line-relay`** (ของ homelab — modified_on ไม่เปลี่ยนก่อน/หลัง deploy)

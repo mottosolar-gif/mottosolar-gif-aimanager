@@ -1,9 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+
+const require = createRequire(import.meta.url);
+const wranglerPkgPath = require.resolve("wrangler/package.json");
+const wranglerPkg = require("wrangler/package.json");
+const binRelative =
+  typeof wranglerPkg.bin === "string" ? wranglerPkg.bin : wranglerPkg.bin.wrangler;
+const wranglerBin = path.join(path.dirname(wranglerPkgPath), binRelative);
 
 const forbiddenColumns = new Set([
   "name",
@@ -84,15 +92,13 @@ const mode = process.argv.includes("--remote")
     : "schema-only";
 
 if (mode !== "schema-only") {
-  const outputPath = join(tmpdir(), `aim-privacy-${randomUUID()}.sql`);
+  const outputPath = path.join(tmpdir(), `aim-privacy-${randomUUID()}.sql`);
   const config = mode === "remote" ? "worker/wrangler.toml" : "worker/wrangler.local.toml";
-  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
   try {
     const result = spawnSync(
-      npx,
+      process.execPath,
       [
-        "--no-install",
-        "wrangler",
+        wranglerBin,
         "d1",
         "export",
         "aim-db",
@@ -102,11 +108,18 @@ if (mode !== "schema-only") {
         "--output",
         outputPath,
       ],
-      { cwd: resolve("."), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
+    if (result.error) {
+      throw new Error(`ไม่สามารถเรียก wrangler ได้: ${result.error.message}`);
+    }
     if (result.status !== 0) {
       throw new Error(
-        `Could not inspect the ${mode} D1 database. Apply migrations and check its Wrangler configuration, then rerun this guard. ${(result.stderr || result.stdout).trim()}`,
+        `Could not inspect the ${mode} D1 database. Apply migrations and check its Wrangler configuration, then rerun this guard. ${(result.stderr || result.stdout || "no output captured").trim()}`,
       );
     }
     const dump = await readFile(outputPath, "utf8");

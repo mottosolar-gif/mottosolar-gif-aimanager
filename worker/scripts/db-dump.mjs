@@ -1,6 +1,14 @@
 import { mkdir, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
+
+const require = createRequire(import.meta.url);
+const wranglerPkgPath = require.resolve("wrangler/package.json");
+const wranglerPkg = require("wrangler/package.json");
+const binRelative =
+  typeof wranglerPkg.bin === "string" ? wranglerPkg.bin : wranglerPkg.bin.wrangler;
+const wranglerBin = path.join(path.dirname(wranglerPkgPath), binRelative);
 
 const requestedMode = process.argv.includes("--remote")
   ? "remote"
@@ -13,7 +21,7 @@ if (requestedMode !== "local" && requestedMode !== "remote") {
 }
 
 const timestamp = new Date().toISOString().replaceAll(":", "-");
-const outputPath = resolve(
+const outputPath = path.resolve(
   process.env.AIM_DB_DUMP_PATH ?? `dumps/aim-db-${timestamp}.sql`,
 );
 
@@ -26,16 +34,14 @@ try {
   if (error?.code !== "ENOENT") throw error;
 }
 
-await mkdir(dirname(outputPath), { recursive: true });
+await mkdir(path.dirname(outputPath), { recursive: true });
 
 const config =
   requestedMode === "remote" ? "worker/wrangler.toml" : "worker/wrangler.local.toml";
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const result = spawnSync(
-  npx,
+  process.execPath,
   [
-    "--no-install",
-    "wrangler",
+    wranglerBin,
     "d1",
     "export",
     "aim-db",
@@ -48,6 +54,10 @@ const result = spawnSync(
   { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 );
 
+if (result.error) {
+  throw new Error(`ไม่สามารถเรียก wrangler ได้: ${result.error.message}`);
+}
+
 if (result.status !== 0) {
   const detail = (result.stderr || result.stdout || "Wrangler returned no detail.").trim();
   throw new Error(
@@ -56,4 +66,3 @@ if (result.status !== 0) {
 }
 
 console.log(`D1 ${requestedMode} dump written to ${outputPath}`);
-
