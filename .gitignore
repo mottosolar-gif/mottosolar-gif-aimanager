@@ -1,0 +1,19 @@
+node_modules/
+.npm-cache/
+coverage/
+dist/
+.wrangler/
+
+# Secrets and local Cloudflare configuration.
+.dev.vars
+.dev.vars.*
+*.env
+.env
+.env.*
+wrangler.toml
+**/wrangler.toml
+
+# Database exports can contain operational data.
+dumps/
+*.sqlite
+*.sqlite3

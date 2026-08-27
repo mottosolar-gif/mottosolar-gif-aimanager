@@ -1,0 +1,29 @@
+{
+  "name": "aim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "cf:config": "node worker/scripts/render-wrangler-config.mjs",
+    "db:dump": "node worker/scripts/db-dump.mjs",
+    "db:migration:check": "node schema/check-migration.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply aim-db --local --config worker/wrangler.local.toml",
+    "db:migrate:remote": "wrangler d1 migrations apply aim-db --remote --config worker/wrangler.toml",
+    "deploy": "wrangler deploy --config worker/wrangler.toml",
+    "dev": "wrangler dev --config worker/wrangler.local.toml",
+    "privacy:check": "node schema/privacy-guard.mjs --schema-only",
+    "privacy:check:local": "node schema/privacy-guard.mjs --local",
+    "privacy:check:remote": "node schema/privacy-guard.mjs --remote",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260826.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.9",
+    "wrangler": "^4.126.0"
+  }
+}
