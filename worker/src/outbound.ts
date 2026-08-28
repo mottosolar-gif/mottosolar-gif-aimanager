@@ -40,7 +40,14 @@ export async function sendTextNotification(
         "X-AIM-Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify({ kind: "text", person_code: personCode, text }),
-      redirect: "error",
+      // ★ 2026-08-28: เดิมเป็น redirect:"error" ซึ่ง **Cloudflare Workers ไม่รองรับ**
+      // (รองรับแค่ follow กับ manual) ⇒ fetch โยน TypeError ทิ้งตั้งแต่ยังไม่ออกจากคลาวด์
+      // ผลคือสรุปตามเวลาส่งไม่ออกเลยแม้แต่ครั้งเดียวตั้งแต่เขียนมา และ log ของ IIS ก็ไม่มีร่องรอย
+      // เพราะไม่เคยมีแพ็กเก็ตออกไปจริง — อาการเหมือน "ปลายทางล่ม" ทั้งที่ปลายทางไม่เคยถูกเรียก
+      //
+      // "manual" คงเจตนาเดิมไว้ครบ: ไม่เดินตาม redirect เอง แล้วเราตรวจ 3xx เองด้านล่าง
+      // ⇒ ยังกันการถูกพาไปที่อื่นเงียบ ๆ เหมือนเดิม แต่ได้เหตุผลที่อ่านออกแทน TypeError เปล่า ๆ
+      redirect: "manual",
       signal: controller.signal,
     });
     // 412 = ฝั่งรับตั้งใจไม่ส่ง เพราะวันนี้เป็นวันหยุดของผู้รับ (ปฏิทินอยู่ db_customs ฝั่งโน้น)
@@ -48,6 +55,10 @@ export async function sendTextNotification(
     // (ก่อนฝั่งรับใส่ด่านนี้ 412 ไม่เคยเกิด ⇒ เพิ่มตรงนี้ไม่กระทบพฤติกรรมเดิมแม้แต่กรณีเดียว)
     if (response.status === 412) {
       return { ok: false, reason: "skipped_holiday", retryable: false, skipped: true };
+    }
+    // redirect = ตั้งค่าผิด ไม่ใช่เหตุขัดข้องชั่วคราว ⇒ ลองใหม่กี่ครั้งก็เหมือนเดิม
+    if (response.status >= 300 && response.status < 400) {
+      return { ok: false, reason: "redirected", retryable: false };
     }
     if (!response.ok) {
       return {

@@ -43,7 +43,10 @@ describe("text notification outbound adapter", () => {
       "X-AIM-Notify-Key": "notify-secret",
       "X-AIM-Idempotency-Key": "28/08/2569:morning:P-ASSIST",
     });
-    expect(init?.redirect).toBe("error");
+    // ต้องเป็น "manual" ไม่ใช่ "error" — Cloudflare Workers ไม่รองรับ "error"
+    // และเทสเดิมที่ตรึง "error" ไว้ ทำให้ค่าที่ใช้งานจริงไม่ได้ถูกค้ำเอาไว้เฉย ๆ
+    // (เทสยืนยันได้แค่ว่า "โค้ดส่งค่านี้ไป" ไม่ได้ยืนยันว่า "runtime รับค่านี้")
+    expect(init?.redirect).toBe("manual");
     expect(JSON.parse(String(init?.body))).toEqual({
       kind: "text",
       person_code: "P-ASSIST",
@@ -90,6 +93,14 @@ describe("text notification outbound adapter", () => {
     await expect(
       sendTextNotification(env(), "P-ASSIST", "x", "idem", holiday),
     ).resolves.toEqual({ ok: false, reason: "skipped_holiday", retryable: false, skipped: true });
+
+    // โดน redirect = ตั้งค่าผิด ไม่ใช่เหตุขัดข้องชั่วคราว ⇒ ห้าม retry
+    for (const status of [301, 302, 307, 308]) {
+      const moved = vi.fn(async () => new Response("", { status }));
+      await expect(
+        sendTextNotification(env(), "P-ASSIST", "x", "idem", moved),
+      ).resolves.toEqual({ ok: false, reason: "redirected", retryable: false });
+    }
 
     const malformed = vi.fn(async () => new Response("not-json", { status: 200 }));
     await expect(
