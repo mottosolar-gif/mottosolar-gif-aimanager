@@ -1275,3 +1275,33 @@ describe("POST /sync/tasks", () => {
     }
   });
 });
+
+describe("sync กับ person_code ที่ไม่มีจริง", () => {
+  it("ไม่ยอมให้งานถูกผูกกับคนที่ไม่มีในระบบ", async () => {
+    const database = new SQLiteD1();
+    try {
+      const res = await handleRequest(
+        new Request("https://aim.example/sync/tasks", {
+          method: "POST",
+          headers: new Headers({ "content-type": "application/json", "X-AIM-Sync-Key": "k" }),
+          body: JSON.stringify({
+            tasks: [{ task_ref: "L-777", title: "งานผูกคนผี", status: "assigned",
+                      assignee_person_code: "P-GHOST" }],
+          }),
+        }),
+        {
+          AIM_ASK_KEY: "a", AIM_LINK_KEY: "b", AIM_INGEST_KEY: ingestKey,
+          AIM_SOURCE_HASH_SALT: sourceSalt, AIM_SYNC_KEY: "k", DB: database.asD1(),
+        },
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      const rows = await database.asD1()
+        .prepare("SELECT task_ref, assignee_person_code FROM task").all<{ task_ref: string; assignee_person_code: string | null }>();
+      // ถ้าเก็บได้ = งานลอยอยู่โดยไม่มีเจ้าของจริง ⇒ canView() ตัดสินจากค่าที่ไม่มีความหมาย
+      console.log("   ผลลัพธ์:", JSON.stringify(body), "| แถวในฐาน:", JSON.stringify(rows.results));
+      expect(rows.results.length).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+});
