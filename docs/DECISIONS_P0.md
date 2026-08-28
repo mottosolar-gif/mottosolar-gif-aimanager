@@ -350,3 +350,24 @@ query engine (WP-P2-A2, ยังไม่เริ่ม) ทุกตัวต
    จากอีกเซสชันปนอยู่ · `git checkout --` ไฟล์นั้นเมื่อไร สะพานหลุดเงียบโดยโค้ดยังดูเหมือนต่ออยู่
 3. **ยังไม่มี dump ข้อมูลกลับบ้านรายวัน** (กฎ §5 ข้อ 2 สั่งไว้) · `npm run db:dump` default เป็น local
 4. WP-P0-5 ยังขาด `bin/smoke_aim_forward.php` ตามที่ D-P0-07 M2 กำหนดเป็นเงื่อนไขปิด
+
+---
+
+## D-P0-15 · WP-P2-B3 Section A แก้ตาม code-reviewer แล้ว — ยังรอตรวจอิสระ (2026-08-28 19:05)
+
+พี่เต้อนุมัติแผนแก้ finding A1–A8 ฝั่งคลาวด์ใน `C:\WebApp\aim` และสั่งชัดว่าไม่แตะ Section B
+ที่กำลังแก้คู่ขนานใน `C:\WebApp\vendor-ksk` · ห้าม commit · ห้าม deploy · ห้ามส่ง LINE
+
+**สิ่งที่ Codex ลงมือ:** ป้องกัน `cron_tick` เดินหน้าเมื่อ summary pass ยังมีงาน retry/config error ·
+ทิ้ง ledger trace เมื่อ pass หรือรายคนล้ม · แยกความผิดพลาดรายคน · ทำ config ที่ยังไม่พร้อมให้กู้กลับได้ ·
+แยก 4xx ถาวรออกจาก 5xx/network ชั่วคราว · คง idempotency header ตามสัญญาที่ Section B กำลังรับไปใช้ ·
+แก้ guard คำลงท้าย · seed `cron_tick` เพื่อเดินสาขา catch-up จริง · จำกัด catch-up 4 รอบล่าสุดต่อ tick
+และลง ledger ระบุจำนวนรอบที่ข้าม
+
+**หลักฐานจากเครื่องก่อนส่งตรวจ:** A6 mutation เพิ่มคำลงท้ายเป็น 2 ครั้งแล้วเทสต์ตก `2 != 1` ก่อนคืนค่าและผ่าน ·
+A7 mutation เปลี่ยน `cron_tick` เป็น `cron_tock` แล้วเทสต์ตก (`missed` 1 แทน 4) ก่อนคืนค่าและผ่าน ·
+เทสต์รวมก่อนแก้ 267/267 หลังแก้ 272/272 · `typecheck`/`lint` ผ่าน · migration check ผ่าน 3 ไฟล์สองรอบใน memory
+และยืนยัน `body_ref` ยัง NULL-only
+
+**สถานะ:** ยังห้ามถือว่าปิด WP-P2-B3 — ผลข้างต้นเป็นผลรันของผู้ลงมือเอง ต้องให้ Claude/code-reviewer
+ตรวจ diff และพิสูจน์ซ้ำตามกติกา “Codex สร้าง · Claude ตรวจ” ก่อนตัดสิน CLOSE

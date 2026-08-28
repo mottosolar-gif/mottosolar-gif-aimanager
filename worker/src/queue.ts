@@ -31,6 +31,7 @@ export interface ProcessQueueResult {
 export async function processQueue(
   db: D1Database,
   now: string,
+  recordCheckpoint = true,
 ): Promise<ProcessQueueResult> {
   const result: ProcessQueueResult = { processed: 0, retried: 0, dead: 0 };
   let jobs: PendingJob[] = [];
@@ -101,6 +102,8 @@ export async function processQueue(
     }
   }
 
-  await recordCronTick(db, result.processed, now);
+  if (recordCheckpoint) {
+    await recordCronTick(db, result.processed, now);
+  }
   return result;
 }

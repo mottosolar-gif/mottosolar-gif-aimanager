@@ -7,6 +7,19 @@ export interface PendingJob {
   attempts: number;
 }
 
+export interface SummaryDeliveryClaim {
+  ledgerId: number;
+  attempt: number;
+}
+
+export type SummaryTerminalOutcome =
+  | "sent"
+  | "empty"
+  | "missed";
+
+const summaryActionType = "scheduled_summary";
+const summaryTerminalOutcomes = ["sent", "empty", "missed"] as const;
+
 const insertInboxSql = `
   INSERT OR IGNORE INTO inbox_event (
     event_id, event_type, message_type, source_type, source_hash,
@@ -139,6 +152,230 @@ export async function personIsLinked(
     .bind(personCode)
     .all<{ linked: number }>();
   return query.results.length > 0;
+}
+
+export async function readLinkedPersonCodes(db: D1Database): Promise<string[]> {
+  const query = await db
+    .prepare(
+      `SELECT DISTINCT person.person_code
+       FROM person
+       INNER JOIN person_link ON person_link.person_code = person.person_code
+       ORDER BY person.person_code`,
+    )
+    .all<{ person_code: string }>();
+  return query.results.map((row) => row.person_code);
+}
+
+export async function readLatestCronBefore(
+  db: D1Database,
+  now: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT MAX(occurred_at) AS occurred_at
+       FROM ledger
+       WHERE action_type = 'cron_tick' AND occurred_at < ?`,
+    )
+    .bind(now)
+    .first<{ occurred_at: string | null }>();
+  return row?.occurred_at ?? null;
+}
+
+export async function claimSummaryDelivery(
+  db: D1Database,
+  referenceId: string,
+  personCode: string,
+  now: string,
+): Promise<SummaryDeliveryClaim | null> {
+  const history = await db
+    .prepare(
+      `SELECT outcome, occurred_at
+       FROM ledger
+       WHERE action_type = ? AND reference_id = ? AND actor_code = ?
+       ORDER BY id`,
+    )
+    .bind(summaryActionType, referenceId, personCode)
+    .all<{ outcome: string; occurred_at: string }>();
+
+  if (history.results.some((row) => isSummaryTerminalOutcome(row.outcome))) {
+    return null;
+  }
+
+  const failedAttempts = history.results.filter(
+    (row) => row.outcome === "processing" || row.outcome.startsWith("retry:"),
+  ).length;
+  const retries = history.results.filter((row) => row.outcome.startsWith("retry:"));
+  const latestRetry = retries.at(-1);
+  if (latestRetry) {
+    const delayMilliseconds = 60_000 * 2 ** Math.max(0, retries.length - 1);
+    if (Date.parse(now) < Date.parse(latestRetry.occurred_at) + delayMilliseconds) {
+      return null;
+    }
+  }
+
+  // A fetch is aborted after 10 seconds. Fifteen minutes is therefore safely stale,
+  // while still preventing overlapping cron invocations from sending the same round.
+  const staleBefore = new Date(Date.parse(now) - 15 * 60_000).toISOString();
+  const terminalPlaceholders = summaryTerminalOutcomes.map(() => "?").join(", ");
+  const inserted = await db
+    .prepare(
+      `INSERT INTO ledger (
+         action_type, outcome, reference_id, actor_code, occurred_at, created_at
+       )
+       SELECT ?, 'processing', ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM ledger
+         WHERE action_type = ? AND reference_id = ? AND actor_code = ?
+           AND (outcome IN (${terminalPlaceholders}) OR outcome LIKE 'dead:%')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM ledger
+         WHERE action_type = ? AND reference_id = ? AND actor_code = ?
+           AND outcome = 'processing' AND occurred_at > ?
+       )`,
+    )
+    .bind(
+      summaryActionType,
+      referenceId,
+      personCode,
+      now,
+      now,
+      summaryActionType,
+      referenceId,
+      personCode,
+      ...summaryTerminalOutcomes,
+      summaryActionType,
+      referenceId,
+      personCode,
+      staleBefore,
+    )
+    .run();
+
+  if ((inserted.meta.changes ?? 0) === 0) return null;
+  return {
+    ledgerId: Number(inserted.meta.last_row_id),
+    attempt: failedAttempts + 1,
+  };
+}
+
+export async function finishSummaryDelivery(
+  db: D1Database,
+  ledgerId: number,
+  outcome: SummaryTerminalOutcome | `retry:${string}` | `dead:${string}`,
+): Promise<void> {
+  const updated = await db
+    .prepare("UPDATE ledger SET outcome = ? WHERE id = ? AND outcome = 'processing'")
+    .bind(outcome, ledgerId)
+    .run();
+  if ((updated.meta.changes ?? 0) === 0) {
+    throw new Error("summary delivery claim was not resolved; retry the cron tick");
+  }
+}
+
+export async function recordSummaryTerminal(
+  db: D1Database,
+  referenceId: string,
+  personCode: string,
+  outcome: Extract<SummaryTerminalOutcome, "missed">,
+  now: string,
+): Promise<boolean> {
+  const terminalPlaceholders = summaryTerminalOutcomes.map(() => "?").join(", ");
+  const staleBefore = new Date(Date.parse(now) - 15 * 60_000).toISOString();
+  const inserted = await db
+    .prepare(
+      `INSERT INTO ledger (
+         action_type, outcome, reference_id, actor_code, occurred_at, created_at
+       )
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM ledger
+         WHERE action_type = ? AND reference_id = ? AND actor_code = ?
+           AND (outcome IN (${terminalPlaceholders}) OR outcome LIKE 'dead:%')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM ledger
+         WHERE action_type = ? AND reference_id = ? AND actor_code = ?
+           AND outcome = 'processing' AND occurred_at > ?
+       )`,
+    )
+    .bind(
+      summaryActionType,
+      outcome,
+      referenceId,
+      personCode,
+      now,
+      now,
+      summaryActionType,
+      referenceId,
+      personCode,
+      ...summaryTerminalOutcomes,
+      summaryActionType,
+      referenceId,
+      personCode,
+      staleBefore,
+    )
+    .run();
+  return (inserted.meta.changes ?? 0) > 0;
+}
+
+export async function recordSummaryPassIssue(
+  db: D1Database,
+  referenceId: string,
+  outcome: "config_missing" | "pass_error",
+  now: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO ledger (
+         action_type, outcome, reference_id, actor_code, occurred_at, created_at
+       )
+       SELECT 'scheduled_summary_pass', ?, ?, NULL, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM ledger
+         WHERE action_type = 'scheduled_summary_pass'
+           AND outcome = ? AND reference_id = ?
+       )`,
+    )
+    .bind(outcome, referenceId, now, now, outcome, referenceId)
+    .run();
+}
+
+export async function recordSummaryPersonIssue(
+  db: D1Database,
+  referenceId: string,
+  personCode: string,
+  now: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO ledger (
+         action_type, outcome, reference_id, actor_code, occurred_at, created_at
+       ) VALUES ('scheduled_summary_error', 'retry', ?, ?, ?, ?)`,
+    )
+    .bind(referenceId, personCode, now, now)
+    .run();
+}
+
+export async function recordSummaryCatchupSkip(
+  db: D1Database,
+  skippedRounds: number,
+  now: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO ledger (
+         action_type, outcome, reference_id, actor_code, occurred_at, created_at
+       ) VALUES ('scheduled_summary_catchup', 'skipped', ?, NULL, ?, ?)`,
+    )
+    .bind(String(skippedRounds), now, now)
+    .run();
+}
+
+function isSummaryTerminalOutcome(outcome: string): boolean {
+  return (
+    summaryTerminalOutcomes.some((candidate) => candidate === outcome) ||
+    outcome.startsWith("dead:")
+  );
 }
 
 export type LinkOutcome =

@@ -25,8 +25,14 @@ npm test
 ```
 
 ถ้าจะเปิด Worker local ให้สร้าง `worker/.dev.vars` (ไฟล์นี้ถูก ignore) และใส่
-`AIM_INGEST_KEY` · `AIM_SOURCE_HASH_SALT` · `AIM_ASK_KEY` จาก secret manager แล้วรัน:
+`AIM_INGEST_KEY` · `AIM_SOURCE_HASH_SALT` · `AIM_ASK_KEY` · `AIM_NOTIFY_KEY` และ
+`AIM_NOTIFY_URL` จาก secret manager แล้วรัน:
 (ไม่ใส่ `AIM_ASK_KEY` = `POST /ask` ตอบ 503 โดยไม่บอกสาเหตุ — WP-P2-B2)
+
+`AIM_NOTIFY_KEY` และ `AIM_NOTIFY_URL` ใช้ส่งสรุปตามเวลาไปยัง endpoint ภายในฝั่งรับ
+โดยฝั่งรับต้องใช้ `X-AIM-Idempotency-Key` กันการส่งซ้ำจริง ไม่ใช่เพียงรับ header ทิ้งไว้
+ถ้าขาดค่าตัวใดตัวหนึ่ง Worker จะบันทึกว่า config ยังไม่พร้อมและเก็บรอบนั้นไว้ลองใหม่
+หลังตั้งค่าครบ แทนการปิดรอบนั้นเป็นผลถาวร
 
 ```powershell
 npm run dev

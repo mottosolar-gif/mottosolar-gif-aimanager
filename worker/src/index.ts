@@ -1,9 +1,16 @@
 import { constantTimeEqual, hashSourceId, sha256Bytes } from "./crypto.ts";
-import { enqueueEvents, linkPerson, personIsLinked, readHealth } from "./db/repository.ts";
+import {
+  enqueueEvents,
+  linkPerson,
+  personIsLinked,
+  readHealth,
+  recordSummaryPassIssue,
+} from "./db/repository.ts";
 import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
 import { askQuestion } from "./queryEngine.ts";
 import { processQueue } from "./queue.ts";
+import { processScheduledSummaries } from "./summary.ts";
 import type { Env } from "./types.ts";
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -367,7 +374,21 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 }
 
 export async function handleScheduled(env: Env, now: string): Promise<void> {
-  const result = await processQueue(env.DB, now);
+  let checkpointSafe = false;
+  try {
+    const summaries = await processScheduledSummaries(env, now);
+    checkpointSafe = summaries.checkpointSafe;
+    log(
+      now,
+      "summary_cron",
+      "tick",
+      `${summaries.sent}:${summaries.empty}:${summaries.retried}:${summaries.dead}:${summaries.missed}:${summaries.configMissing}`,
+    );
+  } catch {
+    await recordSummaryPassIssue(env.DB, `cron:${now}`, "pass_error", now);
+    log(now, "summary_cron", "unavailable", "check-ledger-and-retry");
+  }
+  const result = await processQueue(env.DB, now, checkpointSafe);
   log(now, "cron", "tick", String(result.processed));
 }
 

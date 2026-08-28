@@ -848,7 +848,7 @@ function isCompletionStatement(question: string): boolean {
   ].some((pattern) => pattern.test(question));
 }
 
-function thaiLocalDate(now: string): Date {
+export function thaiLocalDate(now: string): Date {
   const parsed = Date.parse(now);
   if (!Number.isFinite(parsed)) throw new RangeError("Invalid UTC timestamp");
   return new Date(parsed + thaiOffsetMilliseconds);
