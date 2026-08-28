@@ -3,7 +3,7 @@ import { canView, readPerson } from "../src/visibility.ts";
 
 interface StoredPerson {
   person_code: string;
-  department: string;
+  department: string | null;
   role: string;
 }
 
@@ -28,7 +28,11 @@ class MemoryStatement {
 class MemoryD1 {
   people: StoredPerson[] = [];
 
-  seedPerson(personCode: string, department: string, role: string): void {
+  seedPerson(
+    personCode: string,
+    department: string | null,
+    role: string,
+  ): void {
     this.people.push({
       person_code: personCode,
       department,
@@ -129,6 +133,20 @@ describe("visibility", () => {
         database as unknown as D1Database,
         "P-MANAGER-EMPTY",
         "P-WORKER-EMPTY",
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("denies visibility when both manager and target departments are null", async () => {
+    const database = seededDatabase();
+    database.seedPerson("P-MANAGER-NULL", null, "manager");
+    database.seedPerson("P-WORKER-NULL", null, "worker");
+
+    await expect(
+      canView(
+        database as unknown as D1Database,
+        "P-MANAGER-NULL",
+        "P-WORKER-NULL",
       ),
     ).resolves.toBe(false);
   });

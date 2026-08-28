@@ -46,8 +46,8 @@ export async function canView(
     const target = await readPerson(db, targetPersonCode);
     // A manager cannot inherit visibility for a target absent from the database.
     if (!target) return false;
-    // An empty department is a data-quality gap, never a basis for cross-visibility.
-    if (actor.department === "" || target.department === "") return false;
+    // A missing department is a data-quality gap, never a basis for cross-visibility.
+    if (!actor.department || !target.department) return false;
     return actor.department === target.department;
   }
 

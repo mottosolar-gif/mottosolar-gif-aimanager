@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   { ignores: ["**/*.js", "**/*.mjs", "**/*.cjs"] },
   {
-    files: ["worker/src/**/*.ts", "worker/test/**/*.ts"],
+    files: ["worker/src/**/*.ts", "worker/test/**/*.ts", "vitest.config.ts"],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
