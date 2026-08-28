@@ -46,7 +46,12 @@ try {
     Push-Location $repo
     try {
         $before = @(Get-ChildItem -Path (Join-Path $repo 'dumps') -Filter 'aim-db-*.sql' -ErrorAction SilentlyContinue).Count
-        & npm run db:dump -- --remote 2>&1 | Out-Null
+        # 2026-08-29: was "2>&1 | Out-Null". In PowerShell 5.1, merging a native exe stderr into
+        # the pipeline wraps each line in a NativeCommandError, so ANY stderr output makes the
+        # try/catch fire even when npm exited 0. npm prints an update notice to stderr every few
+        # days -- so this task failed only on the days npm felt chatty. Took a selfcheck alert to find.
+        # Trust the exit code, not the presence of stderr text.
+        & npm run db:dump -- --remote | Out-Null
         if ($LASTEXITCODE -ne 0) { throw ('npm run db:dump exited ' + $LASTEXITCODE) }
 
         $files = @(Get-ChildItem -Path (Join-Path $repo 'dumps') -Filter 'aim-db-*.sql' |
