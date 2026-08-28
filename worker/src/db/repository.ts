@@ -696,3 +696,76 @@ export async function applyTaskTransition(
   if (!updated) throw new Error("task not found after transition: " + current.taskRef);
   return updated;
 }
+
+export interface MirroredTask {
+  taskRef: string;
+  title: string;
+  status: string;
+  assigneePersonCode: string | null;
+  creatorPersonCode: string | null;
+  dueAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/**
+ * รับงานที่ฝั่ง LIVE ส่งขึ้นมา — **ทางเดียว: LIVE → คลาวด์ เท่านั้น**
+ *
+ * ความจริงเรื่องงานอยู่ที่ `db_customs.tbl_task` ฝั่ง LIVE (พี่เต้ตัดสิน 2026-08-28)
+ * ตารางนี้เป็น **สำเนาอ่านอย่างเดียว** มีไว้ให้คลาวด์ตอบคำถามได้เท่านั้น
+ * ⇒ ค่าที่นี่ถูกทับด้วยของฝั่ง LIVE ได้ทุกเมื่อ · ห้ามถือว่าเป็นความจริง · ห้ามให้ที่อื่นเขียนทับ
+ *
+ * แตะเฉพาะแถวที่ task_ref ขึ้นต้น "L-" ⇒ แถวที่ใส่มือไว้ (เช่น T-DEMO-001 ที่พี่เต้สั่งให้คงไว้)
+ * ไม่ถูกแตะเลย · ไม่มีการลบแถว เพราะฝั่ง LIVE ไม่ลบงาน มันเปลี่ยนเป็น cancelled แทน
+ */
+export async function upsertMirroredTasks(
+  db: D1Database,
+  tasks: readonly MirroredTask[],
+  now: string,
+): Promise<{ written: number; skipped: number }> {
+  let written = 0;
+  let skipped = 0;
+  for (const task of tasks) {
+    if (!task.taskRef.startsWith("L-")) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await db
+        .prepare(
+          `INSERT INTO task (task_ref, title, status, assignee_person_code, creator_person_code,
+                             due_at, completed_at, cancelled_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (task_ref) DO UPDATE SET
+             title = excluded.title,
+             status = excluded.status,
+             assignee_person_code = excluded.assignee_person_code,
+             creator_person_code = excluded.creator_person_code,
+             due_at = excluded.due_at,
+             completed_at = excluded.completed_at,
+             cancelled_at = excluded.cancelled_at,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(
+          task.taskRef,
+          task.title,
+          task.status,
+          task.assigneePersonCode,
+          task.creatorPersonCode,
+          task.dueAt,
+          task.completedAt,
+          task.cancelledAt,
+          task.createdAt ?? now,
+          task.updatedAt ?? now,
+        )
+        .run();
+      written += 1;
+    } catch {
+      // แถวเดียวพังต้องไม่ล้มทั้งชุด — ฝั่งส่งจะส่งมาใหม่รอบหน้าอยู่แล้ว (ส่งทั้งชุดทุกครั้ง)
+      skipped += 1;
+    }
+  }
+  return { written, skipped };
+}

@@ -5,6 +5,8 @@ export interface Env {
   AIM_NOTIFY_KEY?: string;
   // ไม่ตั้ง = /admin/summary ปิดอยู่ (503) — ปุ่มฉุกเฉินควรปิดโดยปริยาย ไม่ใช่เปิดโดยปริยาย
   AIM_ADMIN_KEY?: string;
+  // ไม่ตั้ง = /sync/tasks ปิดอยู่ (503) — ประตูที่เขียนตารางงานได้ ต้องปิดโดยปริยาย
+  AIM_SYNC_KEY?: string;
   AIM_NOTIFY_URL?: string;
   AIM_SOURCE_HASH_SALT: string;
   DB: D1Database;

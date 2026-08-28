@@ -1,9 +1,11 @@
+import type { MirroredTask } from "./db/repository.ts";
 import { constantTimeEqual, hashSourceId, sha256Bytes } from "./crypto.ts";
 import {
   enqueueEvents,
   linkPerson,
   personIsLinked,
   readHealth,
+  upsertMirroredTasks,
   recordSummaryPassIssue,
 } from "./db/repository.ts";
 import { writeSafeLog } from "./logger.ts";
@@ -140,6 +142,96 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
  * ยืมกุญแจ = ใครที่ควรได้แค่ถาม กลายเป็นสั่งยิงหาทุกคนได้ทันที
  * ไม่ตั้งกุญแจ = 503 (ปิดอยู่) · กุญแจผิด = 403 เหมือนกันทุกตัวอักษร ไม่บอกว่าผิดตรงไหน
  */
+const MIRROR_STATUSES = new Set([
+  "draft", "assigned", "accepted", "rejected", "en_route",
+  "arrived", "in_progress", "blocked", "completed", "cancelled",
+]);
+const MAX_SYNC_TASKS = 500;
+
+/**
+ * POST /sync/tasks — ฝั่ง LIVE ส่งงานขึ้นมาให้คลาวด์เก็บเป็นสำเนา (พี่เต้ตัดสิน 2026-08-28 · ทางเลือก ก)
+ *
+ * **ทางเดียวเท่านั้น** — ความจริงเรื่องงานอยู่ที่ db_customs.tbl_task ฝั่ง LIVE
+ * ที่นี่เป็นสำเนาอ่านอย่างเดียว มีไว้ให้ queryEngine ตอบคำถามได้ · ห้ามมี endpoint เขียนกลับ
+ *
+ * กุญแจแยกดวง (AIM_SYNC_KEY) — ยืมของ ask/notify ไม่ได้ เพราะสิทธิ์คนละระดับ:
+ * ใครถือกุญแจนี้ เขียนทับตารางงานทั้งตารางได้
+ */
+async function handleSyncTasks(request: Request, env: Env, now: string): Promise<Response> {
+  const ref = safeReference();
+  if (!env.AIM_SYNC_KEY) {
+    log(now, "sync_tasks", "unavailable", ref);
+    return json({ ok: false, next: "configure the Worker sync secret and retry" }, 503);
+  }
+
+  const suppliedKey = request.headers.get("X-AIM-Sync-Key") ?? "";
+  let authorized = false;
+  try {
+    authorized = await constantTimeEqual(suppliedKey, env.AIM_SYNC_KEY);
+  } catch {
+    log(now, "sync_tasks", "unavailable", ref);
+    return json({ ok: false, next: "check Worker cryptography support and retry" }, 503);
+  }
+  if (!authorized) {
+    log(now, "sync_tasks", "forbidden", ref);
+    return json({ ok: false, next: "check caller authorization and retry" }, 403);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    log(now, "sync_tasks", "bad_request", ref);
+    return json({ ok: false, next: "send a JSON body with a tasks array" }, 400);
+  }
+  const rows = (payload as { tasks?: unknown } | null)?.tasks;
+  if (!Array.isArray(rows)) {
+    log(now, "sync_tasks", "bad_request", ref);
+    return json({ ok: false, next: "send a JSON body with a tasks array" }, 400);
+  }
+  if (rows.length > MAX_SYNC_TASKS) {
+    // ปฏิเสธทั้งชุดดีกว่ารับครึ่งเดียวเงียบ ๆ — ฝั่งส่งจะได้รู้ว่าต้องแบ่งชุด ไม่ใช่คิดว่าครบแล้ว
+    log(now, "sync_tasks", "too_large", ref);
+    return json({ ok: false, next: `send at most ${MAX_SYNC_TASKS} tasks per request` }, 413);
+  }
+
+  const tasks: MirroredTask[] = [];
+  let rejected = 0;
+  for (const raw of rows) {
+    const row = (raw ?? {}) as Record<string, unknown>;
+    const taskRef = typeof row.task_ref === "string" ? row.task_ref : "";
+    const title = typeof row.title === "string" ? row.title : "";
+    const status = typeof row.status === "string" ? row.status : "";
+    // ปฏิเสธรายแถวที่รูปแบบไม่ถูก แล้วรายงานจำนวนกลับไป — ไม่เงียบ ไม่เดาค่าให้
+    if (!taskRef.startsWith("L-") || taskRef.length > 64 || title === "" || !MIRROR_STATUSES.has(status)) {
+      rejected += 1;
+      continue;
+    }
+    const text = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+    tasks.push({
+      taskRef,
+      title: title.slice(0, 500),
+      status,
+      assigneePersonCode: text(row.assignee_person_code),
+      creatorPersonCode: text(row.creator_person_code),
+      dueAt: text(row.due_at),
+      completedAt: text(row.completed_at),
+      cancelledAt: text(row.cancelled_at),
+      createdAt: text(row.created_at),
+      updatedAt: text(row.updated_at),
+    });
+  }
+
+  try {
+    const result = await upsertMirroredTasks(env.DB, tasks, now);
+    log(now, "sync_tasks", "ok", ref);
+    return json({ ok: true, written: result.written, skipped: result.skipped, rejected });
+  } catch {
+    log(now, "sync_tasks", "error", ref);
+    return json({ ok: false, next: "check the D1 binding and retry" }, 503);
+  }
+}
+
 async function handleAdminSummary(request: Request, env: Env, now: string): Promise<Response> {
   const ref = safeReference();
   if (!env.AIM_ADMIN_KEY) {
@@ -402,6 +494,13 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       );
     }
     return handleIngest(request, env, now);
+  }
+
+  if (url.pathname === "/sync/tasks") {
+    if (request.method !== "POST") {
+      return json({ ok: false, next: "call POST /sync/tasks" }, 405);
+    }
+    return handleSyncTasks(request, env, now);
   }
 
   if (url.pathname === "/admin/summary") {

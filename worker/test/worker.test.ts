@@ -1159,3 +1159,119 @@ describe("POST /link", () => {
     }
   });
 });
+
+describe("POST /sync/tasks", () => {
+  const syncKey = "test-sync-key";
+
+  function syncEnv(database: SQLiteD1, key: string | null = syncKey): Env {
+    return {
+      AIM_ASK_KEY: "test-ask-key",
+      AIM_LINK_KEY: "test-link-key",
+      AIM_INGEST_KEY: ingestKey,
+      AIM_SOURCE_HASH_SALT: sourceSalt,
+      // null = ไม่ตั้งกุญแจเลย · ส่ง undefined ตรง ๆ ไม่ได้ เพราะพารามิเตอร์มีค่าเริ่มต้น
+      // แล้ว JS จะคืนค่าเริ่มต้นให้แทน ⇒ เทส "ปิดอยู่" จะกลายเป็นเทสที่ไม่ได้ทดสอบอะไร
+      ...(key === null ? {} : { AIM_SYNC_KEY: key }),
+      DB: database.asD1(),
+    };
+  }
+
+  function syncRequest(body: unknown, key: string | null = syncKey): Request {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (key !== null) headers.set("X-AIM-Sync-Key", key);
+    return new Request("https://aim.example/sync/tasks", {
+      method: "POST",
+      headers,
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+  }
+
+  const liveTask = {
+    task_ref: "L-42",
+    title: "เช็คสต็อกคลัง",
+    status: "in_progress",
+    assignee_person_code: null,
+    creator_person_code: null,
+    due_at: "2026-09-01T00:00:00.000Z",
+  };
+
+  async function readTasks(database: SQLiteD1) {
+    const rows = await database
+      .asD1()
+      .prepare("SELECT task_ref, title, status FROM task ORDER BY task_ref")
+      .all<{ task_ref: string; title: string; status: string }>();
+    return rows.results;
+  }
+
+  it("รับงานจากฝั่ง LIVE แล้วทับของเดิมได้ (ส่งซ้ำต้องไม่เกิดแถวซ้ำ)", async () => {
+    const database = new SQLiteD1();
+    try {
+      const first = await handleRequest(syncRequest({ tasks: [liveTask] }), syncEnv(database));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ ok: true, written: 1, rejected: 0 });
+
+      const changed = { ...liveTask, title: "เช็คสต็อกคลัง (แก้ชื่อ)", status: "completed" };
+      await handleRequest(syncRequest({ tasks: [changed] }), syncEnv(database));
+
+      // ฝั่ง LIVE เป็นเจ้าของความจริง ⇒ ส่งมาใหม่ต้องทับของเดิม ไม่ใช่เพิ่มแถว
+      expect(await readTasks(database)).toEqual([
+        { task_ref: "L-42", title: "เช็คสต็อกคลัง (แก้ชื่อ)", status: "completed" },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("ไม่แตะแถวที่ไม่ได้ขึ้นต้นด้วย L- (ใบที่ใส่มือไว้ต้องรอด)", async () => {
+    const database = new SQLiteD1();
+    try {
+      await database
+        .asD1()
+        .prepare("INSERT INTO task (task_ref, title, status) VALUES ('T-DEMO-001','ใบตัวอย่าง','assigned')")
+        .run();
+      const res = await handleRequest(
+        syncRequest({ tasks: [{ ...liveTask, task_ref: "T-DEMO-001", title: "โดนทับ" }] }),
+        syncEnv(database),
+      );
+      expect(await res.json()).toMatchObject({ ok: true, written: 0, rejected: 1 });
+      expect(await readTasks(database)).toEqual([
+        { task_ref: "T-DEMO-001", title: "ใบตัวอย่าง", status: "assigned" },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("ปฏิเสธสถานะที่ไม่รู้จักรายแถว แล้วบอกจำนวน ไม่กลืนเงียบ", async () => {
+    const database = new SQLiteD1();
+    try {
+      const res = await handleRequest(
+        syncRequest({ tasks: [liveTask, { ...liveTask, task_ref: "L-43", status: "ไม่รู้จัก" }] }),
+        syncEnv(database),
+      );
+      expect(await res.json()).toMatchObject({ ok: true, written: 1, rejected: 1 });
+      expect((await readTasks(database)).map((r) => r.task_ref)).toEqual(["L-42"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("ปิดอยู่ถ้าไม่ตั้งกุญแจ · กุญแจผิดตอบ 403 · ชุดใหญ่เกินถูกปฏิเสธทั้งชุด", async () => {
+    const database = new SQLiteD1();
+    try {
+      const off = await handleRequest(syncRequest({ tasks: [] }), syncEnv(database, null));
+      expect(off.status).toBe(503);
+
+      const wrong = await handleRequest(syncRequest({ tasks: [] }, "wrong"), syncEnv(database));
+      expect(wrong.status).toBe(403);
+
+      const huge = Array.from({ length: 501 }, (_, i) => ({ ...liveTask, task_ref: `L-${i}` }));
+      const tooBig = await handleRequest(syncRequest({ tasks: huge }), syncEnv(database));
+      expect(tooBig.status).toBe(413);
+      // ปฏิเสธทั้งชุด ไม่ใช่รับครึ่งเดียว — ฝั่งส่งต้องรู้ว่ายังไม่ครบ
+      expect(await readTasks(database)).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+});
