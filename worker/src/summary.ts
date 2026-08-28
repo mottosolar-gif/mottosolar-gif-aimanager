@@ -200,15 +200,91 @@ export async function processScheduledSummaries(
     }
     return result;
   }
-  const nowMilliseconds = requiredTimestamp(now);
-
   for (const round of rounds) {
-    const age = nowMilliseconds - requiredTimestamp(round.scheduledAt);
-    const referenceId = summaryReference(round);
+    await deliverRoundToPeople(env, round, people, now, result, fetcher, asker, {
+      referenceId: summaryReference(round),
+      enforceLateness: true,
+    });
+  }
+  return result;
+}
+
+/**
+ * ยิงสรุปหนึ่งรอบเดี๋ยวนี้ตามคำสั่งคน — ใช้เมื่อรอบตามเวลาไม่ได้ออก (ระบบสะดุด / อยากดูของจริงก่อน)
+ *
+ * เดินผ่าน deliverRoundToPeople() ตัวเดียวกับรอบตามเวลาทุกบรรทัด ต่างกันแค่ 2 อย่าง:
+ *   1. ข้ามด่าน "เกิน 60 นาทีถือว่าสาย" — เพราะคนสั่งเองย่อมรู้อยู่แล้วว่ามันสาย
+ *   2. ใช้ reference_id ขึ้นต้น manual: ⇒ ไม่ไปทับผลของรอบจริง และประวัติแยกออกว่าใครสั่ง
+ *
+ * ที่ **ไม่** ข้าม: ด่านปฏิทินวันหยุด · กันซ้ำระดับ SQL · การจดลง ledger
+ * ⇒ สั่งซ้ำรอบเดิมวันเดิมจะไม่ส่งซ้ำ (ตัว claim ปฏิเสธเอง) และวันหยุดก็ยังไม่รบกวนคน
+ * ตั้งใจให้เป็นแบบนี้: ปุ่มฉุกเฉินที่ปิดด่านความปลอดภัยไปด้วย คือปุ่มที่วันหนึ่งจะถูกใช้ผิด
+ */
+export async function runSummaryRoundNow(
+  env: Env,
+  round: SummaryRound,
+  now: string,
+  fetcher: Fetcher = fetch,
+  asker: SummaryAsker = askQuestion,
+): Promise<SummaryRunResult> {
+  const result: SummaryRunResult = {
+    sent: 0,
+    empty: 0,
+    retried: 0,
+    dead: 0,
+    missed: 0,
+    configMissing: 0,
+    skippedHoliday: 0,
+    checkpointSafe: true,
+  };
+
+  const people = await readLinkedPersonCodes(env.DB);
+  if (people.length === 0) return result;
+
+  if (!env.AIM_NOTIFY_URL || !env.AIM_NOTIFY_KEY) {
+    result.configMissing = people.length;
+    return result;
+  }
+
+  const nowMilliseconds = requiredTimestamp(now);
+  const dayStart = requiredTimestamp(thaiDayRange(now).startUtc);
+  const scheduledMilliseconds = dayStart + (round === "morning" ? 8 : 17) * 60 * 60_000;
+  const target = scheduledRound(round, scheduledMilliseconds, nowMilliseconds);
+
+  await deliverRoundToPeople(env, target, people, now, result, fetcher, asker, {
+    referenceId: `manual:${summaryReference(target)}`,
+    enforceLateness: false,
+  });
+  return result;
+}
+
+/**
+ * ส่งสรุปหนึ่งรอบให้คนทุกคน — **เส้นทางเดียวของการส่งสรุป** ทั้งแบบตามเวลาและแบบสั่งด้วยมือ
+ *
+ * ถอดออกมาจาก processScheduledSummaries() แบบยกก้อน ไม่ได้เขียนใหม่ เพราะ "ยิงด้วยมือ"
+ * ที่เดินคนละเส้นกับของจริง พิสูจน์อะไรไม่ได้เลย — มันจะบอกได้แค่ว่าเส้นที่ไม่มีใครใช้ยังทำงาน
+ *
+ * options.enforceLateness = false มีผลกับด่านเดียวคือ "เกิน 60 นาทีถือว่าสาย"
+ * ด่านที่เหลือทำงานครบทุกตัว: ปฏิทินวันหยุด (ฝั่ง LIVE ตอบ 412) · กันซ้ำระดับ SQL · การจดลง ledger
+ * options.referenceId แยกตัวตนของรอบที่สั่งเองออกจากรอบตามเวลา ⇒ ยิงเองแล้ว
+ * **ไม่ไปทับผลของรอบจริง** และประวัติยังอ่านออกว่าอันไหนคนสั่ง อันไหนนาฬิกาสั่ง
+ */
+async function deliverRoundToPeople(
+  env: Env,
+  round: ScheduledSummaryRound,
+  people: readonly string[],
+  now: string,
+  result: SummaryRunResult,
+  fetcher: Fetcher,
+  asker: SummaryAsker,
+  options: { referenceId: string; enforceLateness: boolean },
+): Promise<void> {
+  const age = requiredTimestamp(now) - requiredTimestamp(round.scheduledAt);
+  const referenceId = options.referenceId;
     for (const personCode of people) {
       let claim: Awaited<ReturnType<typeof claimSummaryDelivery>> = null;
       try {
-        if (age > maximumLatenessMilliseconds) {
+        if (options.enforceLateness && age > maximumLatenessMilliseconds) {
           if (await recordSummaryTerminal(env.DB, referenceId, personCode, "missed", now)) {
             result.missed += 1;
           }
@@ -283,9 +359,6 @@ export async function processScheduledSummaries(
         }
       }
     }
-  }
-
-  return result;
 }
 
 async function recordDeliveryFailure(

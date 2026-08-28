@@ -4,6 +4,7 @@ import {
   buildSummary,
   MAX_SUMMARY_ROUNDS_PER_TICK,
   processScheduledSummaries,
+  runSummaryRoundNow,
   summaryRoundsToProcess,
   type ScheduledSummaryRound,
   type SummaryAsker,
@@ -287,6 +288,67 @@ it("บันทึกวันหยุดเป็น skipped_holiday แล�
         )
         .all<{ outcome: string }>();
       expect(ledger.results).toEqual([{ outcome: "skipped_holiday" }]);
+    } finally {
+      database.close();
+    }
+  });
+
+it("สั่งยิงเองได้แม้รอบจะสายไปแล้ว และไม่ทับผลของรอบตามเวลา", async () => {
+    const database = summaryDatabase();
+    seedOpenTask(database);
+    const fetcher = vi.fn(async () => okResponse());
+    // สายไป 6 ชั่วโมง — รอบตามเวลาจะตัดสินว่า missed แน่นอน
+    const lateNow = new Date(Date.parse(morning.scheduledAt) + 6 * 60 * 60_000).toISOString();
+    try {
+      const scheduled = await processScheduledSummaries(env(database), lateNow, fetcher);
+      expect(scheduled.sent).toBe(0);
+      expect(scheduled.missed).toBe(1);
+      expect(fetcher).not.toHaveBeenCalled();
+
+      const manual = await runSummaryRoundNow(env(database), "morning", lateNow, fetcher);
+      expect(manual.sent).toBe(1);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      // ผลของรอบตามเวลาต้องยังเป็น missed เหมือนเดิม — การยิงเองห้ามไปเขียนทับประวัติ
+      const rows = await database
+        .asD1()
+        .prepare(
+          `SELECT reference_id, outcome FROM ledger
+           WHERE action_type = 'scheduled_summary' ORDER BY reference_id`,
+        )
+        .all<{ reference_id: string; outcome: string }>();
+      expect(rows.results).toEqual([
+        { reference_id: "28/08/2569:morning", outcome: "missed" },
+        { reference_id: "manual:28/08/2569:morning", outcome: "sent" },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("สั่งยิงเองซ้ำรอบเดิมไม่ส่งซ้ำ — ปุ่มฉุกเฉินไม่ปิดตัวกันซ้ำ", async () => {
+    const database = summaryDatabase();
+    seedOpenTask(database);
+    const fetcher = vi.fn(async () => okResponse());
+    try {
+      const first = await runSummaryRoundNow(env(database), "morning", morning.scheduledAt, fetcher);
+      const second = await runSummaryRoundNow(env(database), "morning", morning.scheduledAt, fetcher);
+      expect(first.sent).toBe(1);
+      expect(second.sent).toBe(0);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("สั่งยิงเองยังผ่านด่านปฏิทินวันหยุด — ปุ่มฉุกเฉินไม่ปิดด่านความปลอดภัย", async () => {
+    const database = summaryDatabase();
+    seedOpenTask(database);
+    const fetcher = vi.fn(async () => new Response("off", { status: 412 }));
+    try {
+      const result = await runSummaryRoundNow(env(database), "morning", morning.scheduledAt, fetcher);
+      expect(result.sent).toBe(0);
+      expect(result.skippedHoliday).toBe(1);
     } finally {
       database.close();
     }

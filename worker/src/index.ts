@@ -10,7 +10,7 @@ import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
 import { askQuestion } from "./queryEngine.ts";
 import { processQueue } from "./queue.ts";
-import { processScheduledSummaries } from "./summary.ts";
+import { processScheduledSummaries, runSummaryRoundNow } from "./summary.ts";
 import type { Env } from "./types.ts";
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -127,6 +127,61 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
       { ok: false, next: "check D1 availability and retry the same event ID" },
       503,
     );
+  }
+}
+
+/**
+ * POST /admin/summary — สั่งยิงสรุปหนึ่งรอบเดี๋ยวนี้ (WP-P2-B3 · พี่เต้สั่ง 2026-08-28)
+ *
+ * มีไว้เพราะรอบตามเวลาเป็นของนาฬิกา ถ้าวันไหนระบบสะดุดก็ไม่มีทางกู้รอบนั้นเลย
+ * และก่อนเปิดใช้จริงก็ไม่มีทางดูของจริงได้จนกว่าจะถึงเวลา
+ *
+ * กุญแจแยกดวงของตัวเอง (AIM_ADMIN_KEY) ตามขนบ estate — ไม่ยืมของ ask/ingest/notify
+ * ยืมกุญแจ = ใครที่ควรได้แค่ถาม กลายเป็นสั่งยิงหาทุกคนได้ทันที
+ * ไม่ตั้งกุญแจ = 503 (ปิดอยู่) · กุญแจผิด = 403 เหมือนกันทุกตัวอักษร ไม่บอกว่าผิดตรงไหน
+ */
+async function handleAdminSummary(request: Request, env: Env, now: string): Promise<Response> {
+  const ref = safeReference();
+  if (!env.AIM_ADMIN_KEY) {
+    log(now, "admin_summary", "unavailable", ref);
+    return json({ ok: false, next: "configure the Worker admin secret and retry" }, 503);
+  }
+
+  const suppliedKey = request.headers.get("X-AIM-Admin-Key") ?? "";
+  let authorized = false;
+  try {
+    authorized = await constantTimeEqual(suppliedKey, env.AIM_ADMIN_KEY);
+  } catch {
+    log(now, "admin_summary", "unavailable", ref);
+    return json({ ok: false, next: "check Worker cryptography support and retry" }, 503);
+  }
+  if (!authorized) {
+    log(now, "admin_summary", "forbidden", ref);
+    return json({ ok: false, next: "check caller authorization and retry" }, 403);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    log(now, "admin_summary", "bad_request", ref);
+    return json({ ok: false, next: "send a JSON body with round: morning|evening" }, 400);
+  }
+  const body = (payload ?? {}) as Record<string, unknown>;
+  const round = body.round;
+  if (round !== "morning" && round !== "evening") {
+    log(now, "admin_summary", "bad_request", ref);
+    return json({ ok: false, next: "send round: morning|evening" }, 400);
+  }
+
+  try {
+    const result = await runSummaryRoundNow(env, round, now);
+    log(now, "admin_summary", result.sent > 0 ? "sent" : "nothing_sent", ref);
+    // บอกผลตามจริงทุกช่อง — คนกดปุ่มต้องรู้ว่า "ไม่ส่ง" เพราะอะไร ไม่ใช่เห็นแค่ ok:true แล้วเดาเอง
+    return json({ ok: true, round, ...result });
+  } catch {
+    log(now, "admin_summary", "error", ref);
+    return json({ ok: false, next: "check the D1 binding and the notify secrets, then retry" }, 503);
   }
 }
 
@@ -349,6 +404,13 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return handleIngest(request, env, now);
   }
 
+  if (url.pathname === "/admin/summary") {
+    if (request.method !== "POST") {
+      return json({ ok: false, next: "call POST /admin/summary" }, 405);
+    }
+    return handleAdminSummary(request, env, now);
+  }
+
   if (url.pathname === "/ask") {
     if (request.method !== "POST") {
       logAsk(now, "method_not_allowed", "none", 0);
@@ -372,7 +434,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const ref = safeReference();
   log(now, "request", "not_found", ref);
   return json(
-    { ok: false, next: "use GET /healthz, POST /ingest/line or POST /ask" },
+    { ok: false, next: "use GET /healthz, POST /ingest/line, POST /ask or POST /admin/summary" },
     404,
   );
 }
