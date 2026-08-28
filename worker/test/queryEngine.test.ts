@@ -14,6 +14,20 @@ import { SQLiteD1 } from "./helpers/sqliteD1.ts";
 
 const now = "2026-08-27T09:00:00.000Z";
 
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 interface TaskSeed {
   ref: string;
   title: string;
@@ -215,6 +229,33 @@ describe("ordered pattern matching", () => {
   ])("routes team-scoped phrase %s to %s", (phrase, expectedIntent) => {
     expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
   });
+
+  const politenessParticles = [
+    "ครับ",
+    "ครับผม",
+    "ค่ะ",
+    "คะ",
+    "นะคะ",
+    "นะครับ",
+    "จ้า",
+    "ฮะ",
+  ];
+
+  it.each(politenessParticles)(
+    "keeps a team question team-scoped with attached politeness particle %s",
+    (particle) => {
+      expect(matchQuestionIntent(`ใครยังไม่รับงาน${particle}`)).toBe(
+        "team_unaccepted",
+      );
+    },
+  );
+
+  it.each(politenessParticles)(
+    "keeps a self question self-scoped with attached politeness particle %s",
+    (particle) => {
+      expect(matchQuestionIntent(`งานของฉันมีอะไรบ้าง${particle}`)).toBe("my_tasks");
+    },
+  );
 
   it.each([
     ["ขอสรุปงานวันนี้ของฉัน", null],
@@ -670,6 +711,59 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
+  const timestampAggregateIntents = registeredIntents.filter(
+    (registered) => registered.timestampAggregate !== null,
+  );
+
+  it.each(timestampAggregateIntents)(
+    "skips one bad timestamp without vetoing aggregate $id",
+    async ({ id, question, timestampAggregate }) => {
+      const aggregateDb = new SQLiteD1();
+      try {
+        await insertPerson(aggregateDb, "P-AGG-OWNER", "management", "owner");
+        await insertPerson(aggregateDb, "P-AGG-W", "operations", "worker");
+        for (let index = 1; index <= 21; index += 1) {
+          const bad = index === 21;
+          await insertTask(aggregateDb, {
+            ref: `T-AGG-${timestampAggregate}-${String(index).padStart(2, "0")}`,
+            title: `งาน aggregate ${index}`,
+            status: timestampAggregate === "cycle" ? "completed" : "accepted",
+            assignee: "P-AGG-W",
+            createdAt: "2026-08-20T00:00:00.000Z",
+            acceptedAt:
+              timestampAggregate === "accept" && bad
+                ? "2026-08-20T25:00:00.000Z"
+                : timestampAggregate === "accept"
+                  ? "2026-08-20T00:05:00.000Z"
+                  : "2026-08-20T00:10:00.000Z",
+            completedAt:
+              timestampAggregate === "cycle"
+                ? bad
+                  ? "2026-08-20T25:00:00.000Z"
+                  : "2026-08-20T00:40:00.000Z"
+                : undefined,
+          });
+        }
+
+        const answer = await askQuestion(
+          aggregateDb.asD1(),
+          "P-AGG-OWNER",
+          question,
+          now,
+        );
+
+        expect(answer).toMatchObject({ intent: id, matched: true, denied: false });
+        expect(answer.text).toContain("20 งาน");
+        expect(answer.text).toContain(
+          timestampAggregate === "cycle" ? "30 นาที" : "5 นาที",
+        );
+        expect(answer.text).toContain("ข้ามข้อมูลเวลาที่อ่านไม่ได้ 1 งาน");
+      } finally {
+        aggregateDb.close();
+      }
+    },
+  );
+
   it("keeps all four non-team statistics complete after 501 invisible rows", async () => {
     const crowded = new SQLiteD1();
     try {
@@ -737,18 +831,21 @@ describe("answers from real SQLite queries", () => {
     const crowded = new SQLiteD1();
     try {
       await insertPerson(crowded, "P-Z-ACTOR", "operations", "manager");
-      await insertPerson(crowded, "P-A-HIDDEN", "finance", "worker");
 
-      for (let index = 1; index <= 501; index += 1) {
+      // More distinct people than the historical LIMIT 501 is essential here.
+      // Hundreds of rows owned by one person cannot expose a per-person aggregate cutoff.
+      for (let index = 1; index <= 502; index += 1) {
         const suffix = String(index).padStart(4, "0");
+        const hiddenPersonCode = `P-A-HIDDEN-${suffix}`;
         const assignedRef = `T-A-HIDDEN-ASSIGNED-${suffix}`;
         const completedRef = `T-A-HIDDEN-COMPLETED-${suffix}`;
         const rejectedRef = `T-A-HIDDEN-REJECTED-${suffix}`;
+        await insertPerson(crowded, hiddenPersonCode, "finance", "worker");
         await insertTask(crowded, {
           ref: assignedRef,
           title: "งานซ่อนที่เรียงก่อน",
           status: "assigned",
-          assignee: "P-A-HIDDEN",
+          assignee: hiddenPersonCode,
           createdAt: "2026-08-27T00:00:00.000Z",
           dueAt: "2026-08-27T00:01:00.000Z",
         });
@@ -756,7 +853,7 @@ describe("answers from real SQLite queries", () => {
           ref: completedRef,
           title: "งานเสร็จที่ซ่อน",
           status: "completed",
-          assignee: "P-A-HIDDEN",
+          assignee: hiddenPersonCode,
           createdAt: "2026-08-27T00:00:00.000Z",
           acceptedAt: "2026-08-27T00:10:00.000Z",
           completedAt: "2026-08-27T00:20:00.000Z",
@@ -765,7 +862,7 @@ describe("answers from real SQLite queries", () => {
           ref: rejectedRef,
           title: "งานปฏิเสธที่ซ่อน",
           status: "rejected",
-          assignee: "P-A-HIDDEN",
+          assignee: hiddenPersonCode,
           createdAt: "2026-08-27T00:00:00.000Z",
         });
         await insertEvent(
@@ -851,6 +948,15 @@ describe("answers from real SQLite queries", () => {
         });
 
         const taskSql = sqlStatements.filter((sql) => /\bFROM\s+task\b/i.test(sql));
+        for (const sql of taskSql.filter((statement) => /\bLIMIT\b/i.test(statement))) {
+          const beforeLimit = sql.slice(0, sql.search(/\bLIMIT\b/i));
+          const scopedBeforeLimit =
+            /assignee_person_code\s*=\s*\?/i.test(beforeLimit) ||
+            /assignee_person_code\s+IN\s*\(/i.test(beforeLimit) ||
+            /assignee_person_code\s+IS\s+NULL/i.test(beforeLimit);
+          expect(scopedBeforeLimit, `${registered.id}: ${sql}`).toBe(true);
+        }
+
         if (taskSql.length > 0) {
           expect(answer.text, registered.id).not.toMatch(
             /(?:ตรวจแล้ว ไม่มีงาน|เพราะไม่มีงาน|ยังไม่มีงาน|ไม่พบงาน)/,
@@ -871,13 +977,6 @@ describe("answers from real SQLite queries", () => {
           ).toBe(true);
         }
 
-        for (const sql of taskSql.filter((statement) => /\bLIMIT\b/i.test(statement))) {
-          const scopedBeforeLimit =
-            /assignee_person_code\s*=\s*\?/i.test(sql) ||
-            /assignee_person_code\s+IS\s+NULL/i.test(sql) ||
-            /GROUP\s+BY\s+(?:t\.)?assignee_person_code/i.test(sql);
-          expect(scopedBeforeLimit, `${registered.id}: ${sql}`).toBe(true);
-        }
       }
     } finally {
       crowded.close();
@@ -979,6 +1078,36 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
+  it("bounds row-level team reads after visibility and discloses the cutoff", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-BOUND-M", "operations", "manager");
+      await insertPerson(crowded, "P-BOUND-W", "operations", "worker");
+      for (let index = 1; index <= 501; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-BOUND-${String(index).padStart(4, "0")}`,
+          title: `งานรอรับ ${index}`,
+          status: "assigned",
+          assignee: "P-BOUND-W",
+          createdAt: "2026-08-20T00:00:00.000Z",
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-BOUND-M",
+        "ใครยังไม่รับงาน",
+        now,
+      );
+
+      expect(answer.text).toContain("คำนวณจาก 500 งานแรกตามลำดับคิวเท่านั้น");
+      expect(answer.text).toContain("เพราะมีงานมากกว่าขีดจำกัดค่ะ");
+      expect(answer.text.length).toBeLessThan(5_000);
+    } finally {
+      crowded.close();
+    }
+  });
+
   it("caps one extreme title and discloses that the title was shortened", async () => {
     const crowded = new SQLiteD1();
     try {
@@ -1005,18 +1134,39 @@ describe("answers from real SQLite queries", () => {
       crowded.close();
     }
   });
+
+  it("never cuts a non-BMP character into a lone surrogate", async () => {
+    const unicodeDb = new SQLiteD1();
+    try {
+      await insertPerson(unicodeDb, "P-UNICODE-W", "operations", "worker");
+      await insertTask(unicodeDb, {
+        ref: "T-UNICODE",
+        title: `${"ก".repeat(798)}😀ท้ายข้อความ`,
+        status: "assigned",
+        assignee: "P-UNICODE-W",
+        createdAt: "2026-08-20T00:00:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        unicodeDb.asD1(),
+        "P-UNICODE-W",
+        "งานของฉันมีอะไรบ้าง",
+        now,
+      );
+
+      expect(answer.text).toContain("ชื่องานที่ยาวถูกย่อด้วย …");
+      expect(answer.text).not.toContain("😀");
+      expect(hasUnpairedSurrogate(answer.text)).toBe(false);
+    } finally {
+      unicodeDb.close();
+    }
+  });
 });
 
 describe("visibility and fail-closed behavior", () => {
-  const deniedQuestions = [
-    ["team_unaccepted", "ใครยังไม่รับงาน"],
-    ["team_most_open", "ใครมีงานค้างมากที่สุด"],
-    ["team_overdue", "งานที่เกินกำหนดของทีม"],
-    ["team_today", "สรุปงานวันนี้ทั้งทีม"],
-    ["team_rejected", "ใครปฏิเสธงานบ้าง"],
-    ["team_unassigned", "งานที่ยังไม่มีคนรับ"],
-    ["stats_fastest_accept", "ใครรับงานเร็วที่สุด"],
-  ];
+  const deniedQuestions = registeredIntents
+    .filter((registered) => registered.teamOnly)
+    .map((registered) => [registered.id, registered.question] as const);
 
   it("keeps role-based visibility decisions out of the query engine", () => {
     const source = readFileSync(
@@ -1118,8 +1268,9 @@ describe("visibility and fail-closed behavior", () => {
     );
 
     expect(answer.text).toContain("P-A2");
-    // One actor read for the answer, then one target read per distinct assignee.
-    expect(personQueries).toBe(4);
+    // One actor read for the answer, then one read for every other person in
+    // the headcount scope. The actor is reused from the visibility memo.
+    expect(personQueries).toBe(5);
   });
 
   it("returns no partial data when canView throws", async () => {
@@ -1146,6 +1297,29 @@ describe("visibility and fail-closed behavior", () => {
     for (const code of ["P-W1", "P-A2", "P-B1"]) {
       expect(answer.text).not.toContain(code);
     }
+  });
+
+  it("surfaces a bounded team-query failure instead of reporting an empty team", async () => {
+    const base = database.asD1();
+    const failingTeamDb = {
+      prepare(query: string): D1PreparedStatement {
+        if (/\bFROM\s+task\b/i.test(query)) {
+          throw new Error("team task query failed");
+        }
+        return base.prepare(query);
+      },
+    } as unknown as D1Database;
+
+    const answer = await askQuestion(
+      failingTeamDb,
+      "P-MANAGER-A",
+      "สรุปงานวันนี้ทั้งทีม",
+      now,
+    );
+
+    expect(answer.text).toContain("อ่านข้อมูลไม่ได้");
+    expect(answer.text).not.toContain("งานใหม่วันนี้ 0 งาน");
+    expect(answer.text).not.toContain("ไม่มีงาน");
   });
 
   it("returns no data and does not throw for an unknown actor on self and team intents", async () => {

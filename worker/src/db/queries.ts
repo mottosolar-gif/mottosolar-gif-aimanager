@@ -47,6 +47,21 @@ const nonTerminalStatuses =
   "'draft','assigned','accepted','en_route','arrived','in_progress','blocked'";
 const openStatuses =
   "'assigned','accepted','en_route','arrived','in_progress','blocked'";
+export const candidateRowLimit = 500;
+const candidateFetchLimit = candidateRowLimit + 1;
+
+function personCodeScope(personCodes: readonly string[]): {
+  placeholders: string;
+  bindings: string[];
+} {
+  if (personCodes.length === 0) {
+    throw new RangeError("At least one visible person code is required");
+  }
+  return {
+    placeholders: personCodes.map(() => "?").join(", "),
+    bindings: [...personCodes],
+  };
+}
 
 async function all<T>(
   db: D1Database,
@@ -168,7 +183,9 @@ export function queryMyLatestAssignedTask(
 
 export function queryTeamUnacceptedTasks(
   db: D1Database,
+  visiblePersonCodes: readonly string[],
 ): Promise<AssignedTaskQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<AssignedTaskQueryRow>(
     db,
     `SELECT ${taskColumns},
@@ -177,41 +194,50 @@ export function queryTeamUnacceptedTasks(
      LEFT JOIN task_event te
        ON te.task_ref = t.task_ref AND te.new_status = 'assigned'
      WHERE t.status = 'assigned'
-       AND t.assignee_person_code IS NOT NULL
+       AND t.assignee_person_code IN (${scope.placeholders})
      GROUP BY t.task_ref, t.title, t.status, t.assignee_person_code,
               t.created_at, t.scheduled_at, t.due_at,
               t.accepted_at, t.completed_at
-     ORDER BY assigned_at, t.task_ref`,
+     ORDER BY assigned_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
+    ...scope.bindings,
   );
 }
 
 export function queryTeamOpenCandidates(
   db: D1Database,
+  visiblePersonCodes: readonly string[],
 ): Promise<PersonTaskCountQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<PersonTaskCountQueryRow>(
     db,
     `SELECT t.assignee_person_code, COUNT(*) AS task_count
      FROM task t
      WHERE t.status IN (${openStatuses})
-       AND t.assignee_person_code IS NOT NULL
+       AND t.assignee_person_code IN (${scope.placeholders})
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
+    ...scope.bindings,
   );
 }
 
 export function queryTeamOverdueCandidates(
   db: D1Database,
   now: string,
+  visiblePersonCodes: readonly string[],
 ): Promise<TaskQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<TaskQueryRow>(
     db,
     `SELECT ${taskColumns}
      FROM task t
      WHERE t.due_at < ?
        AND t.status NOT IN ('completed','cancelled','rejected')
-       AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.due_at, t.task_ref`,
+       AND t.assignee_person_code IN (${scope.placeholders})
+     ORDER BY t.due_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     now,
+    ...scope.bindings,
   );
 }
 
@@ -219,17 +245,26 @@ export function queryTeamTodayCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
+  includeUnassigned: boolean,
 ): Promise<TaskQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
+  const unassignedScope = includeUnassigned
+    ? " OR t.assignee_person_code IS NULL"
+    : "";
   return all<TaskQueryRow>(
     db,
      `SELECT ${taskColumns}
       FROM task t
-      WHERE (
+      WHERE (t.assignee_person_code IN (${scope.placeholders})${unassignedScope})
+        AND (
          (t.created_at >= ? AND t.created_at < ?)
          OR (t.completed_at >= ? AND t.completed_at < ?)
          OR t.status IN (${openStatuses})
-       )
-     ORDER BY t.created_at, t.task_ref`,
+        )
+     ORDER BY t.created_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
+    ...scope.bindings,
     startUtc,
     endUtc,
     startUtc,
@@ -239,14 +274,18 @@ export function queryTeamTodayCandidates(
 
 export function queryTeamRejectedCandidates(
   db: D1Database,
+  visiblePersonCodes: readonly string[],
 ): Promise<TaskQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<TaskQueryRow>(
     db,
     `SELECT ${taskColumns}
      FROM task t
      WHERE t.status = 'rejected'
-       AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref`,
+       AND t.assignee_person_code IN (${scope.placeholders})
+     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
+    ...scope.bindings,
   );
 }
 
@@ -257,7 +296,8 @@ export function queryTeamUnassignedTasks(db: D1Database): Promise<TaskQueryRow[]
      FROM task t
      WHERE t.assignee_person_code IS NULL
        AND t.status IN (${nonTerminalStatuses})
-     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref`,
+     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -265,7 +305,9 @@ export function queryCompletedMonthCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
 ): Promise<PersonTaskCountQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<PersonTaskCountQueryRow>(
     db,
     `SELECT t.assignee_person_code, COUNT(*) AS task_count
@@ -273,11 +315,12 @@ export function queryCompletedMonthCandidates(
      WHERE t.status = 'completed'
        AND t.completed_at >= ?
        AND t.completed_at < ?
-       AND t.assignee_person_code IS NOT NULL
+       AND t.assignee_person_code IN (${scope.placeholders})
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
+    ...scope.bindings,
   );
 }
 
@@ -285,12 +328,14 @@ export function queryRejectedMonthCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
 ): Promise<PersonTaskCountQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<PersonTaskCountQueryRow>(
     db,
     `SELECT t.assignee_person_code, COUNT(*) AS task_count
      FROM task t
-     WHERE t.assignee_person_code IS NOT NULL
+     WHERE t.assignee_person_code IN (${scope.placeholders})
        AND EXISTS (
          SELECT 1
          FROM task_event te
@@ -301,6 +346,7 @@ export function queryRejectedMonthCandidates(
        )
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
+    ...scope.bindings,
     startUtc,
     endUtc,
   );
@@ -310,30 +356,43 @@ export function queryCycleTimeCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
 ): Promise<PersonDurationAggregateQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<PersonDurationAggregateQueryRow>(
     db,
     `SELECT t.assignee_person_code,
-            COUNT(*) AS task_count,
+            SUM(CASE
+              WHEN julianday(t.completed_at) IS NOT NULL
+                AND julianday(t.accepted_at) IS NOT NULL
+                AND julianday(t.completed_at) >= julianday(t.accepted_at) THEN 1
+              ELSE 0
+            END) AS task_count,
             CAST(ROUND(COALESCE(SUM(
-              (julianday(t.completed_at) - julianday(t.accepted_at)) * 86400000.0
+              CASE
+                WHEN julianday(t.completed_at) IS NOT NULL
+                  AND julianday(t.accepted_at) IS NOT NULL
+                  AND julianday(t.completed_at) >= julianday(t.accepted_at)
+                THEN (julianday(t.completed_at) - julianday(t.accepted_at)) * 86400000.0
+                ELSE 0
+              END
             ), 0)) AS INTEGER) AS total_milliseconds,
             SUM(CASE
               WHEN julianday(t.completed_at) IS NULL
-                OR julianday(t.accepted_at) IS NULL THEN 1
+                OR julianday(t.accepted_at) IS NULL
+                OR julianday(t.completed_at) < julianday(t.accepted_at) THEN 1
               ELSE 0
             END) AS invalid_task_count
      FROM task t
      WHERE t.status = 'completed'
        AND t.completed_at >= ?
        AND t.completed_at < ?
-       AND t.accepted_at IS NOT NULL
-       AND t.completed_at >= t.accepted_at
-       AND t.assignee_person_code IS NOT NULL
+       AND t.assignee_person_code IN (${scope.placeholders})
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
+    ...scope.bindings,
   );
 }
 
@@ -341,7 +400,9 @@ export function queryAcceptTimeCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
 ): Promise<PersonDurationAggregateQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
   return all<PersonDurationAggregateQueryRow>(
     db,
     `SELECT t.assignee_person_code,
@@ -370,11 +431,12 @@ export function queryAcceptTimeCandidates(
      WHERE t.accepted_at IS NOT NULL
        AND t.accepted_at >= ?
        AND t.accepted_at < ?
-       AND t.assignee_person_code IS NOT NULL
+       AND t.assignee_person_code IN (${scope.placeholders})
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
+    ...scope.bindings,
   );
 }
 
@@ -382,15 +444,23 @@ export function queryNewTodayCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
+  visiblePersonCodes: readonly string[],
+  includeUnassigned: boolean,
 ): Promise<PersonTaskCountQueryRow[]> {
+  const scope = personCodeScope(visiblePersonCodes);
+  const unassignedScope = includeUnassigned
+    ? " OR t.assignee_person_code IS NULL"
+    : "";
   return all<PersonTaskCountQueryRow>(
     db,
     `SELECT t.assignee_person_code, COUNT(*) AS task_count
       FROM task t
-      WHERE t.created_at >= ?
+      WHERE (t.assignee_person_code IN (${scope.placeholders})${unassignedScope})
+        AND t.created_at >= ?
         AND t.created_at < ?
       GROUP BY t.assignee_person_code
       ORDER BY t.assignee_person_code`,
+    ...scope.bindings,
     startUtc,
     endUtc,
   );
