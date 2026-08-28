@@ -14,6 +14,16 @@ export interface AssignedTaskQueryRow extends TaskQueryRow {
   assigned_at: string;
 }
 
+export interface PersonTaskCountQueryRow {
+  assignee_person_code: string | null;
+  task_count: number;
+}
+
+export interface PersonDurationAggregateQueryRow extends PersonTaskCountQueryRow {
+  total_milliseconds: number;
+  invalid_task_count: number;
+}
+
 export interface SystemStatusQueryResult {
   latestInboxAt: string | null;
   pendingJobs: number;
@@ -178,15 +188,17 @@ export function queryTeamUnacceptedTasks(
   );
 }
 
-export function queryTeamOpenCandidates(db: D1Database): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+export function queryTeamOpenCandidates(
+  db: D1Database,
+): Promise<PersonTaskCountQueryRow[]> {
+  return all<PersonTaskCountQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code, COUNT(*) AS task_count
      FROM task t
      WHERE t.status IN (${openStatuses})
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.created_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     GROUP BY t.assignee_person_code
+     ORDER BY t.assignee_person_code`,
   );
 }
 
@@ -260,17 +272,17 @@ export function queryCompletedMonthCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
-): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+): Promise<PersonTaskCountQueryRow[]> {
+  return all<PersonTaskCountQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code, COUNT(*) AS task_count
      FROM task t
      WHERE t.status = 'completed'
        AND t.completed_at >= ?
        AND t.completed_at < ?
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.completed_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     GROUP BY t.assignee_person_code
+     ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
   );
@@ -280,10 +292,10 @@ export function queryRejectedMonthCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
-): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+): Promise<PersonTaskCountQueryRow[]> {
+  return all<PersonTaskCountQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code, COUNT(*) AS task_count
      FROM task t
      WHERE t.assignee_person_code IS NOT NULL
        AND EXISTS (
@@ -294,8 +306,8 @@ export function queryRejectedMonthCandidates(
            AND te.occurred_at >= ?
            AND te.occurred_at < ?
        )
-     ORDER BY t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     GROUP BY t.assignee_person_code
+     ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
   );
@@ -305,10 +317,19 @@ export function queryCycleTimeCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
-): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+): Promise<PersonDurationAggregateQueryRow[]> {
+  return all<PersonDurationAggregateQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code,
+            COUNT(*) AS task_count,
+            CAST(ROUND(COALESCE(SUM(
+              (julianday(t.completed_at) - julianday(t.accepted_at)) * 86400000.0
+            ), 0)) AS INTEGER) AS total_milliseconds,
+            SUM(CASE
+              WHEN julianday(t.completed_at) IS NULL
+                OR julianday(t.accepted_at) IS NULL THEN 1
+              ELSE 0
+            END) AS invalid_task_count
      FROM task t
      WHERE t.status = 'completed'
        AND t.completed_at >= ?
@@ -316,23 +337,34 @@ export function queryCycleTimeCandidates(
        AND t.accepted_at IS NOT NULL
        AND t.completed_at >= t.accepted_at
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.completed_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     GROUP BY t.assignee_person_code
+     ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
   );
 }
 
-export function queryAcceptTimeCandidates(db: D1Database): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+export function queryAcceptTimeCandidates(
+  db: D1Database,
+): Promise<PersonDurationAggregateQueryRow[]> {
+  return all<PersonDurationAggregateQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code,
+            COUNT(*) AS task_count,
+            CAST(ROUND(COALESCE(SUM(
+              (julianday(t.accepted_at) - julianday(t.created_at)) * 86400000.0
+            ), 0)) AS INTEGER) AS total_milliseconds,
+            SUM(CASE
+              WHEN julianday(t.accepted_at) IS NULL
+                OR julianday(t.created_at) IS NULL THEN 1
+              ELSE 0
+            END) AS invalid_task_count
      FROM task t
      WHERE t.accepted_at IS NOT NULL
        AND t.accepted_at >= t.created_at
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.accepted_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     GROUP BY t.assignee_person_code
+     ORDER BY t.assignee_person_code`,
   );
 }
 
@@ -340,15 +372,15 @@ export function queryNewTodayCandidates(
   db: D1Database,
   startUtc: string,
   endUtc: string,
-): Promise<TaskQueryRow[]> {
-  return all<TaskQueryRow>(
+): Promise<PersonTaskCountQueryRow[]> {
+  return all<PersonTaskCountQueryRow>(
     db,
-    `SELECT ${taskColumns}
+    `SELECT t.assignee_person_code, COUNT(*) AS task_count
       FROM task t
       WHERE t.created_at >= ?
         AND t.created_at < ?
-       ORDER BY t.created_at, t.task_ref
-       LIMIT ${candidateFetchLimit}`,
+      GROUP BY t.assignee_person_code
+      ORDER BY t.assignee_person_code`,
     startUtc,
     endUtc,
   );

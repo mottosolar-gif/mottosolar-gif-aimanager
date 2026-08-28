@@ -19,6 +19,8 @@ import {
   queryTeamUnacceptedTasks,
   queryTeamUnassignedTasks,
   type AssignedTaskQueryRow,
+  type PersonDurationAggregateQueryRow,
+  type PersonTaskCountQueryRow,
   type TaskQueryRow,
 } from "./db/queries.ts";
 import {
@@ -238,6 +240,7 @@ const exactIntentPhrases = new Map<string, IntentId>([
   ["ใครปฏิเสธ", "team_rejected"],
   ["งานว่าง", "team_unassigned"],
   ["งานล่าสุด", "my_latest_assigned"],
+  ["สรุปงานวันนี้", "my_done_today"],
   ["เฉลี่ยใช้เวลากี่นาที", "stats_avg_cycle"],
   ["ใครรับเร็วสุด", "stats_fastest_accept"],
 ]);
@@ -253,6 +256,14 @@ const teamOnlyIntents = new Set<IntentId>([
 ]);
 
 const firstPersonMarkers = ["ของฉัน", "ของผม", "ของหนู", "ฉัน", "ผม"] as const;
+const teamScopeMarkers = [
+  "ทีม",
+  "ทุกคน",
+  "คนอื่น",
+  "ลูกน้อง",
+  "ใคร",
+  "คนไหน",
+] as const;
 
 const openStatuses = new Set([
   "assigned",
@@ -264,6 +275,7 @@ const openStatuses = new Set([
 ]);
 
 const thaiOffsetMilliseconds = 7 * 60 * 60 * 1_000;
+const taskListDisplayLimit = 10;
 const thaiMonthAbbreviations = [
   "ม.ค.",
   "ก.พ.",
@@ -337,9 +349,12 @@ export function matchQuestionIntent(question: string): string | null {
   const isFirstPersonQuestion = firstPersonMarkers.some((marker) =>
     normalized.includes(marker),
   );
+  const hasTeamScope = teamScopeMarkers.some((marker) =>
+    normalized.includes(marker),
+  );
   return (
     intentDefinitions.find((definition) =>
-      (!isFirstPersonQuestion || !teamOnlyIntents.has(definition.id)) &&
+      (!isFirstPersonQuestion || hasTeamScope || !teamOnlyIntents.has(definition.id)) &&
       definition.rules.some((rule) =>
         rule.every((keyword) => normalized.includes(keyword)),
       ),
@@ -493,39 +508,33 @@ async function answerIntent(
           ),
         );
       }
-      const lines = rows.map((row) => {
+      const displayed = displayRows(rows);
+      const lines = displayed.rows.map((row) => {
         const duration = durationText(Date.parse(now) - Date.parse(row.assigned_at));
         return `• ${row.assignee_person_code}: ${row.task_ref}${duration ? ` รอรับมา ${duration}` : ""}`;
       });
       return matchedAnswer(
         intent,
         discloseCandidateLimit(
-          `${lines.join("\n")}\nน้องกุ้งพบงานที่ยังไม่รับ ${rows.length} งานค่ะ`,
+          `${lines.join("\n")}${displayed.disclosure}\nน้องกุ้งพบงานที่ยังไม่รับ ${rows.length} งานค่ะ`,
           candidates.truncated,
         ),
       );
     }
     case "team_most_open": {
-      const candidates = boundedCandidates(await queryTeamOpenCandidates(db));
-      const rows = await visibleRows(candidates.rows, canSee);
+      const rows = await visibleRows(await queryTeamOpenCandidates(db), canSee);
       if (rows.length === 0) {
         return matchedAnswer(
           intent,
-          discloseCandidateLimit(
-            "น้องกุ้งตรวจแล้ว ไม่มีงานค้างในขอบเขตทีมที่พี่ดูได้ค่ะ",
-            candidates.truncated,
-          ),
+          "น้องกุ้งตรวจแล้ว ไม่มีงานค้างในขอบเขตทีมที่พี่ดูได้ค่ะ",
         );
       }
-      const ranked = countByAssignee(rows);
+      const ranked = rankTaskCounts(rows);
       const leader = ranked[0];
       if (!leader) {
         return matchedAnswer(
           intent,
-          discloseCandidateLimit(
-            "น้องกุ้งตรวจแล้ว ไม่มีผู้รับงานที่นำมาจัดอันดับได้ในขอบเขตทีมที่พี่ดูได้ กรุณาตรวจข้อมูลผู้รับงานแล้วลองถามอีกครั้งค่ะ",
-            candidates.truncated,
-          ),
+          "น้องกุ้งตรวจแล้ว ไม่มีผู้รับงานที่นำมาจัดอันดับได้ในขอบเขตทีมที่พี่ดูได้ กรุณาตรวจข้อมูลผู้รับงานแล้วลองถามอีกครั้งค่ะ",
         );
       }
       const leaders = ranked.filter((entry) => entry.count === leader.count);
@@ -542,10 +551,7 @@ async function answerIntent(
           : "";
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          `น้องกุ้งจัดอันดับงานค้างในขอบเขตที่พี่ดูได้ดังนี้\n${lines.join("\n")}${truncationText}\n${summary}`,
-          candidates.truncated,
-        ),
+        `น้องกุ้งจัดอันดับงานค้างในขอบเขตที่พี่ดูได้ดังนี้\n${lines.join("\n")}${truncationText}\n${summary}`,
       );
     }
     case "team_overdue": {
@@ -633,125 +639,106 @@ async function answerIntent(
     }
     case "stats_completed_month": {
       const range = thaiMonthRange(now);
-      const candidates = boundedCandidates(
-        await queryCompletedMonthCandidates(db, range.startUtc, range.endUtc),
-      );
       const rows = await visibleRows(
-        candidates.rows,
+        await queryCompletedMonthCandidates(db, range.startUtc, range.endUtc),
         canSee,
       );
+      const count = sumTaskCounts(rows);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          rows.length === 0
-            ? "น้องกุ้งตรวจแล้ว เดือนนี้ไม่มีงานที่เสร็จในขอบเขตที่พี่ดูได้ค่ะ"
-            : `น้องกุ้งตรวจแล้ว เดือนนี้มีงานเสร็จ ${rows.length} งานในขอบเขตที่พี่ดูได้ค่ะ`,
-          candidates.truncated,
-        ),
+        count === 0
+          ? "น้องกุ้งตรวจแล้ว เดือนนี้ไม่มีงานที่เสร็จในขอบเขตที่พี่ดูได้ค่ะ"
+          : `น้องกุ้งตรวจแล้ว เดือนนี้มีงานเสร็จ ${count} งานในขอบเขตที่พี่ดูได้ค่ะ`,
       );
     }
     case "stats_rejected_month": {
       const range = thaiMonthRange(now);
-      const candidates = boundedCandidates(
-        await queryRejectedMonthCandidates(db, range.startUtc, range.endUtc),
-      );
       const rows = await visibleRows(
-        candidates.rows,
+        await queryRejectedMonthCandidates(db, range.startUtc, range.endUtc),
         canSee,
       );
+      const count = sumTaskCounts(rows);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          rows.length === 0
-            ? "น้องกุ้งตรวจแล้ว เดือนนี้ไม่มีงานถูกปฏิเสธในขอบเขตที่พี่ดูได้ค่ะ"
-            : `น้องกุ้งตรวจแล้ว เดือนนี้มีงานถูกปฏิเสธ ${rows.length} งานในขอบเขตที่พี่ดูได้ค่ะ`,
-          candidates.truncated,
-        ),
+        count === 0
+          ? "น้องกุ้งตรวจแล้ว เดือนนี้ไม่มีงานถูกปฏิเสธในขอบเขตที่พี่ดูได้ค่ะ"
+          : `น้องกุ้งตรวจแล้ว เดือนนี้มีงานถูกปฏิเสธ ${count} งานในขอบเขตที่พี่ดูได้ค่ะ`,
       );
     }
     case "stats_avg_cycle": {
       const range = thaiMonthRange(now);
-      const candidates = boundedCandidates(
-        await queryCycleTimeCandidates(db, range.startUtc, range.endUtc),
-      );
       const rows = await visibleRows(
-        candidates.rows,
+        await queryCycleTimeCandidates(db, range.startUtc, range.endUtc),
         canSee,
       );
-      if (rows.length === 0) {
+      const taskCount = sumTaskCounts(rows);
+      if (taskCount === 0) {
         return matchedAnswer(
           intent,
-          discloseCandidateLimit(
-            "น้องกุ้งยังคำนวณเวลาเฉลี่ยไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีทั้งเวลารับและเวลาเสร็จในขอบเขตที่พี่ดูได้ค่ะ",
-            candidates.truncated,
-          ),
+          "น้องกุ้งยังคำนวณเวลาเฉลี่ยไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีทั้งเวลารับและเวลาเสร็จในขอบเขตที่พี่ดูได้ค่ะ",
+        );
+      }
+      if (rows.some((row) => Number(row.invalid_task_count) > 0)) {
+        return matchedAnswer(
+          intent,
+          "น้องกุ้งคำนวณเวลาเฉลี่ยไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลารับและเวลาเสร็จแล้วลองถามอีกครั้งค่ะ",
         );
       }
       const totalMilliseconds = rows.reduce(
-        (total, row) =>
-          total + (Date.parse(row.completed_at ?? "") - Date.parse(row.accepted_at ?? "")),
+        (total, row) => total + Number(row.total_milliseconds),
         0,
       );
-      const averageDuration = durationText(totalMilliseconds / rows.length);
+      const averageDuration = durationText(totalMilliseconds / taskCount);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          averageDuration
-            ? `น้องกุ้งคำนวณจาก ${rows.length} งานแล้ว เวลาเฉลี่ยตั้งแต่รับถึงเสร็จคือ ${averageDuration}ค่ะ`
-            : "น้องกุ้งคำนวณเวลาเฉลี่ยไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลารับและเวลาเสร็จแล้วลองถามอีกครั้งค่ะ",
-          candidates.truncated,
-        ),
+        averageDuration
+          ? `น้องกุ้งคำนวณจาก ${taskCount} งานแล้ว เวลาเฉลี่ยตั้งแต่รับถึงเสร็จคือ ${averageDuration}ค่ะ`
+          : "น้องกุ้งคำนวณเวลาเฉลี่ยไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลารับและเวลาเสร็จแล้วลองถามอีกครั้งค่ะ",
       );
     }
     case "stats_fastest_accept": {
-      const candidates = boundedCandidates(await queryAcceptTimeCandidates(db));
-      const rows = await visibleRows(candidates.rows, canSee);
+      const rows = await visibleRows(await queryAcceptTimeCandidates(db), canSee);
+      if (rows.some((row) => Number(row.invalid_task_count) > 0)) {
+        return matchedAnswer(
+          intent,
+          "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลาสร้างและเวลารับแล้วลองถามอีกครั้งค่ะ",
+        );
+      }
       const fastest = fastestAverageAccept(rows);
       if (!fastest) {
         return matchedAnswer(
           intent,
-          discloseCandidateLimit(
-            "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะไม่มีงานที่มีเวลาสร้างและเวลารับในขอบเขตที่พี่ดูได้ค่ะ",
-            candidates.truncated,
-          ),
+          "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะไม่มีงานที่มีเวลาสร้างและเวลารับในขอบเขตที่พี่ดูได้ค่ะ",
         );
       }
       const averageDuration = durationText(fastest.averageMilliseconds);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          averageDuration
-            ? `น้องกุ้งคำนวณแล้ว ${fastest.personCode} รับงานเร็วที่สุด เฉลี่ย ${averageDuration}จาก ${fastest.count} งานค่ะ`
-            : "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลาสร้างและเวลารับแล้วลองถามอีกครั้งค่ะ",
-          candidates.truncated,
-        ),
+        averageDuration
+          ? `น้องกุ้งคำนวณแล้ว ${fastest.personCode} รับงานเร็วที่สุด เฉลี่ย ${averageDuration}จาก ${fastest.count} งานค่ะ`
+          : "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลาสร้างและเวลารับแล้วลองถามอีกครั้งค่ะ",
       );
     }
     case "stats_new_today": {
       const range = thaiDayRange(now);
-      const candidates = boundedCandidates(
-        await queryNewTodayCandidates(db, range.startUtc, range.endUtc),
-      );
       const rows = await visibleRows(
-        candidates.rows,
+        await queryNewTodayCandidates(db, range.startUtc, range.endUtc),
         canSee,
         canViewUnassigned(actor),
       );
-      const unassignedCount = rows.filter(
-        (row) => row.assignee_person_code === null,
-      ).length;
+      const count = sumTaskCounts(rows);
+      const unassignedCount = sumTaskCounts(
+        rows.filter((row) => row.assignee_person_code === null),
+      );
       const unassignedText =
         unassignedCount > 0
           ? ` และในจำนวนนี้ยังไม่มีผู้รับ ${unassignedCount} งาน`
           : "";
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          rows.length === 0
-            ? "น้องกุ้งตรวจแล้ว วันนี้ไม่มีงานใหม่ในขอบเขตที่พี่ดูได้ค่ะ"
-            : `น้องกุ้งตรวจแล้ว วันนี้มีงานใหม่ ${rows.length} งานในขอบเขตที่พี่ดูได้${unassignedText}ค่ะ`,
-          candidates.truncated,
-        ),
+        count === 0
+          ? "น้องกุ้งตรวจแล้ว วันนี้ไม่มีงานใหม่ในขอบเขตที่พี่ดูได้ค่ะ"
+          : `น้องกุ้งตรวจแล้ว วันนี้มีงานใหม่ ${count} งานในขอบเขตที่พี่ดูได้${unassignedText}ค่ะ`,
       );
     }
     case "help":
@@ -839,12 +826,12 @@ function boundedCandidates<T>(rows: T[]): { rows: T[]; truncated: boolean } {
   };
 }
 
-function discloseCandidateLimit(text: string, truncated: boolean): string {
+export function discloseCandidateLimit(text: string, truncated: boolean): string {
   if (!truncated) return text;
-  return text.replace(
-    /ค่ะ$/,
-    ` โดยตัวเลขนี้คำนวณจาก ${candidateRowLimit} งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ`,
-  );
+  const textWithoutClosingParticle = text
+    .replace(/(?:ค่ะ|คะ)\s*$/, "")
+    .trimEnd();
+  return `${textWithoutClosingParticle} โดยตัวเลขนี้คำนวณจาก ${candidateRowLimit} งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ`;
 }
 
 async function visibleRows<T extends { assignee_person_code: string | null }>(
@@ -869,11 +856,23 @@ function taskListText(
   showAssignee = false,
 ): string {
   if (rows.length === 0) return emptyText;
-  const lines = rows.map((row) => {
+  const displayed = displayRows(rows);
+  const lines = displayed.rows.map((row) => {
     const assignee = showAssignee ? ` ผู้รับ ${row.assignee_person_code}` : "";
     return `• ${taskText(row)}${assignee}`.trimEnd();
   });
-  return `${lines.join("\n")}\n${foundText}ค่ะ`;
+  return `${lines.join("\n")}${displayed.disclosure}\n${foundText}ค่ะ`;
+}
+
+function displayRows<T>(rows: T[]): { rows: T[]; disclosure: string } {
+  const displayedRows = rows.slice(0, taskListDisplayLimit);
+  return {
+    rows: displayedRows,
+    disclosure:
+      displayedRows.length < rows.length
+        ? `\nแสดง ${displayedRows.length} จาก ${rows.length} งาน`
+        : "",
+  };
 }
 
 function taskText(row: TaskQueryRow | AssignedTaskQueryRow): string {
@@ -888,39 +887,42 @@ function durationText(milliseconds: number): string | null {
   return `${hours} ชั่วโมง`;
 }
 
-function countByAssignee(
-  rows: TaskQueryRow[],
+function rankTaskCounts(
+  rows: PersonTaskCountQueryRow[],
 ): Array<{ personCode: string; count: number }> {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    if (!row.assignee_person_code) continue;
-    counts.set(row.assignee_person_code, (counts.get(row.assignee_person_code) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([personCode, count]) => ({ personCode, count }))
+  return rows
+    .filter(
+      (row): row is PersonTaskCountQueryRow & { assignee_person_code: string } =>
+        row.assignee_person_code !== null,
+    )
+    .map((row) => ({
+      personCode: row.assignee_person_code,
+      count: Number(row.task_count),
+    }))
     .sort(
       (left, right) =>
         right.count - left.count || left.personCode.localeCompare(right.personCode),
     );
 }
 
+function sumTaskCounts(rows: PersonTaskCountQueryRow[]): number {
+  return rows.reduce((total, row) => total + Number(row.task_count), 0);
+}
+
 function fastestAverageAccept(
-  rows: TaskQueryRow[],
+  rows: PersonDurationAggregateQueryRow[],
 ): { personCode: string; averageMilliseconds: number; count: number } | null {
-  const grouped = new Map<string, { total: number; count: number }>();
-  for (const row of rows) {
-    if (!row.assignee_person_code || !row.accepted_at) continue;
-    const duration = Date.parse(row.accepted_at) - Date.parse(row.created_at);
-    const current = grouped.get(row.assignee_person_code) ?? { total: 0, count: 0 };
-    current.total += duration;
-    current.count += 1;
-    grouped.set(row.assignee_person_code, current);
-  }
-  const ranked = [...grouped.entries()]
-    .map(([personCode, value]) => ({
-      personCode,
-      averageMilliseconds: value.total / value.count,
-      count: value.count,
+  const ranked = rows
+    .filter(
+      (row): row is PersonDurationAggregateQueryRow & {
+        assignee_person_code: string;
+      } => row.assignee_person_code !== null && Number(row.task_count) > 0,
+    )
+    .map((row) => ({
+      personCode: row.assignee_person_code,
+      averageMilliseconds:
+        Number(row.total_milliseconds) / Number(row.task_count),
+      count: Number(row.task_count),
     }))
     .sort(
       (left, right) =>

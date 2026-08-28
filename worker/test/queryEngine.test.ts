@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   askQuestion,
+  discloseCandidateLimit,
   matchQuestionIntent,
   thaiDayRange,
   thaiDisplayTime,
@@ -224,6 +225,20 @@ describe("ordered pattern matching", () => {
     ["สรุปงานที่เสร็จวันนี้", "my_done_today"],
   ])("never routes self-scoped phrase %s to a team intent", (phrase, expectedIntent) => {
     expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it.each([
+    ["งานเกินกำหนดของทีมผม", "team_overdue"],
+    ["วันนี้ทีมของผมมีงานอะไรบ้าง", "team_today"],
+    ["งานค้างของทีมผม", "team_most_open"],
+    ["ทีมผมใครมีงานค้างเยอะสุด", "team_most_open"],
+    ["ใครยังไม่รับงานที่ผมมอบหมาย", "team_unaccepted"],
+  ])("lets an explicit team cue win in %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it("deliberately routes the natural bare daily summary to the actor", () => {
+    expect(matchQuestionIntent("สรุปงานวันนี้")).toBe("my_done_today");
   });
 
   it.each(negativePhraseCases)("does not hijack %s", (phrase) => {
@@ -517,18 +532,28 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
-  it("caps candidate work and discloses the 500-row scope", async () => {
+  it("ranks SQL aggregates without dropping a person after 500 task rows", async () => {
     const crowded = new SQLiteD1();
     try {
       await insertPerson(crowded, "P-LIMIT-OWNER", "management", "owner");
-      await insertPerson(crowded, "P-LIMIT-W", "operations", "worker");
+      await insertPerson(crowded, "P-AAA", "operations", "worker");
+      await insertPerson(crowded, "P-ZZZ", "operations", "worker");
       for (let index = 1; index <= 501; index += 1) {
         await insertTask(crowded, {
-          ref: `T-LIMIT-${String(index).padStart(4, "0")}`,
-          title: `งานลำดับ ${index}`,
+          ref: `T-AAA-${String(index).padStart(4, "0")}`,
+          title: `งาน A ลำดับ ${index}`,
           status: "assigned",
-          assignee: "P-LIMIT-W",
+          assignee: "P-AAA",
           createdAt: `2026-08-20T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        });
+      }
+      for (let index = 1; index <= 600; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-ZZZ-${String(index).padStart(4, "0")}`,
+          title: `งาน Z ลำดับ ${index}`,
+          status: "assigned",
+          assignee: "P-ZZZ",
+          createdAt: `2026-08-21T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
         });
       }
 
@@ -539,12 +564,185 @@ describe("answers from real SQLite queries", () => {
         now,
       );
 
-      expect(answer.text).toContain("P-LIMIT-W มีงานค้างมากที่สุด 500 งาน");
-      expect(answer.text).toContain("ตัวเลขนี้คำนวณจาก 500 งานแรก");
-      expect(answer.text).not.toContain("501 งาน");
+      expect(answer.text).toContain("P-ZZZ มีงานค้างมากที่สุด 600 งาน");
+      expect(answer.text).not.toContain("500 งานแรก");
     } finally {
       crowded.close();
     }
+  });
+
+  it("finds the fastest SQL aggregate even when another person has over 500 rows", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-FAST-OWNER", "management", "owner");
+      await insertPerson(crowded, "P-AAA", "operations", "worker");
+      await insertPerson(crowded, "P-ZZZ", "operations", "worker");
+      for (let index = 1; index <= 501; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-FAST-A-${String(index).padStart(4, "0")}`,
+          title: `งานรับช้า ${index}`,
+          status: "accepted",
+          assignee: "P-AAA",
+          createdAt: "2026-08-20T00:00:00.000Z",
+          acceptedAt: "2026-08-20T00:10:00.000Z",
+        });
+      }
+      for (let index = 1; index <= 600; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-FAST-Z-${String(index).padStart(4, "0")}`,
+          title: `งานรับเร็ว ${index}`,
+          status: "accepted",
+          assignee: "P-ZZZ",
+          createdAt: "2026-08-20T00:00:00.000Z",
+          acceptedAt: "2026-08-20T00:01:00.000Z",
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-FAST-OWNER",
+        "ใครรับงานเร็วที่สุด",
+        now,
+      );
+
+      expect(answer.text).toContain("P-ZZZ รับงานเร็วที่สุด");
+      expect(answer.text).toContain("600 งาน");
+      expect(answer.text).not.toContain("500 งานแรก");
+    } finally {
+      crowded.close();
+    }
+  });
+
+  it("keeps all four non-team statistics complete after 501 invisible rows", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-STATS-W", "operations", "worker");
+      await insertPerson(crowded, "P-STATS-OTHER", "finance", "worker");
+      for (let index = 1; index <= 501; index += 1) {
+        const ref = `T-A-OTHER-${String(index).padStart(4, "0")}`;
+        await insertTask(crowded, {
+          ref,
+          title: `งานคนอื่น ${index}`,
+          status: "completed",
+          assignee: "P-STATS-OTHER",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          acceptedAt: "2026-08-01T00:01:00.000Z",
+          completedAt: "2026-08-01T00:02:00.000Z",
+        });
+        await insertEvent(crowded, ref, "rejected", "2026-08-01T00:01:30.000Z");
+      }
+      await insertTask(crowded, {
+        ref: "T-Z-WORKER-OWN",
+        title: "งานของเจ้าตัว",
+        status: "completed",
+        assignee: "P-STATS-W",
+        createdAt: "2026-08-27T08:00:00.000Z",
+        acceptedAt: "2026-08-27T08:10:00.000Z",
+        completedAt: "2026-08-27T08:40:00.000Z",
+      });
+      await insertEvent(
+        crowded,
+        "T-Z-WORKER-OWN",
+        "rejected",
+        "2026-08-27T08:20:00.000Z",
+      );
+
+      const questions = [
+        "งานเสร็จกี่ใบเดือนนี้",
+        "งานถูกปฏิเสธกี่ใบเดือนนี้",
+        "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
+        "วันนี้มีงานใหม่กี่ใบ",
+      ];
+      for (const question of questions) {
+        const answer = await askQuestion(
+          crowded.asD1(),
+          "P-STATS-W",
+          question,
+          now,
+        );
+        expect(answer.text).toContain("1 งาน");
+        expect(answer.text).not.toContain("ไม่มีงาน");
+        expect(answer.text).not.toContain("500 งานแรก");
+      }
+      const average = await askQuestion(
+        crowded.asD1(),
+        "P-STATS-W",
+        "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
+        now,
+      );
+      expect(average.text).toContain("30 นาที");
+    } finally {
+      crowded.close();
+    }
+  });
+
+  it("caps task-list display at 10 while reporting the full visible total", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-LIST-W", "operations", "worker");
+      for (let index = 1; index <= 12; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-LIST-${String(index).padStart(2, "0")}`,
+          title: `งานรายการ ${index}`,
+          status: "assigned",
+          assignee: "P-LIST-W",
+          createdAt: "2026-08-20T00:00:00.000Z",
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-LIST-W",
+        "งานของฉันมีอะไรบ้าง",
+        now,
+      );
+      const bullets = answer.text.split("\n").filter((line) => line.startsWith("• "));
+
+      expect(bullets).toHaveLength(10);
+      expect(answer.text).toContain("แสดง 10 จาก 12 งาน");
+      expect(answer.text).toContain("งานของพี่ 12 งาน");
+      expect(answer.text.length).toBeLessThan(5_000);
+    } finally {
+      crowded.close();
+    }
+  });
+
+  it("caps the custom unaccepted-team list at 10 too", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-LIST-M", "operations", "manager");
+      await insertPerson(crowded, "P-LIST-A", "operations", "worker");
+      for (let index = 1; index <= 12; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-UNACCEPTED-${String(index).padStart(2, "0")}`,
+          title: `งานรอรับ ${index}`,
+          status: "assigned",
+          assignee: "P-LIST-A",
+          createdAt: "2026-08-20T00:00:00.000Z",
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-LIST-M",
+        "ใครยังไม่รับงาน",
+        now,
+      );
+      const bullets = answer.text.split("\n").filter((line) => line.startsWith("• "));
+
+      expect(bullets).toHaveLength(10);
+      expect(answer.text).toContain("แสดง 10 จาก 12 งาน");
+      expect(answer.text).toContain("งานที่ยังไม่รับ 12 งาน");
+      expect(answer.text.length).toBeLessThan(5_000);
+    } finally {
+      crowded.close();
+    }
+  });
+
+  it("always appends candidate truncation disclosure even without a closing particle", () => {
+    expect(discloseCandidateLimit("ข้อความไม่มีคำลงท้าย", true)).toBe(
+      "ข้อความไม่มีคำลงท้าย โดยตัวเลขนี้คำนวณจาก 500 งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ",
+    );
   });
 });
 
