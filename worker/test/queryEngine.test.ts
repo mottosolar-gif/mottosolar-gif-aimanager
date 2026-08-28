@@ -1818,3 +1818,42 @@ async function insertEvent(
     .bind(taskRef, newStatus, occurredAt)
     .run();
 }
+
+describe("ข้อความที่คนอ่านจริง", () => {
+  it("แสดงสถานะเป็นภาษาไทย และเลขงานที่ซิงก์มาเป็น 'งาน #<เลข>'", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-X", "operations", "worker");
+      await insertTask(db, {
+        ref: "L-22", title: "เช็ค SAP stock", status: "in_progress",
+        assignee: "P-X", createdAt: "2026-08-20T01:00:00.000Z",
+      });
+      const answer = await askQuestion(db.asD1(), "P-X", "งานค้าง", now);
+
+      // คนอ่านคือพนักงาน ⇒ ห้ามมีสถานะภาษาอังกฤษดิบ และห้ามมีเลขอ้างอิงภายในแบบ L-22
+      expect(answer.text).toContain("งาน #22");
+      expect(answer.text).toContain("(กำลังทำ)");
+      expect(answer.text).not.toContain("in_progress");
+      expect(answer.text).not.toContain("L-22");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("สถานะที่ยังไม่ได้แปลต้องโผล่ให้เห็น ไม่ถูกกลบเป็นคำรวม", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-Y", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-HAND-1", title: "ใบใส่มือ", status: "blocked",
+        assignee: "P-Y", createdAt: "2026-08-20T01:00:00.000Z",
+      });
+      const answer = await askQuestion(db.asD1(), "P-Y", "งานค้าง", now);
+      // ใบที่ไม่ได้มาจาก LIVE ต้องคงเลขอ้างอิงเดิม ไม่ไปแต่งให้ดูเหมือนกัน
+      expect(answer.text).toContain("T-HAND-1");
+      expect(answer.text).toContain("(ติดปัญหา)");
+    } finally {
+      db.close();
+    }
+  });
+});

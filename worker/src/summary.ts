@@ -162,6 +162,37 @@ export async function buildSummary(
   };
 }
 
+/**
+ * สร้างสรุปของรอบหนึ่งแล้ว **คืนข้อความกลับมาเฉย ๆ ไม่ส่งหาใคร**
+ * มีไว้ให้ดูของจริงก่อนปล่อย และให้ฝั่ง LIVE เอาไปส่งปลายทางอื่นได้ (เช่น กลุ่มทดสอบ)
+ * โดยไม่ต้องประกอบสรุปซ้ำอีกที่ — ถ้าประกอบสองที่ วันหนึ่งสองที่จะไม่ตรงกัน
+ *
+ * ไม่แตะ ledger และไม่ claim อะไรทั้งสิ้น ⇒ เรียกกี่ครั้งก็ได้ ไม่กระทบรอบจริง
+ */
+export async function previewSummaryRound(
+  env: Env,
+  round: SummaryRound,
+  now: string,
+  asker: SummaryAsker = askQuestion,
+): Promise<Array<{ personCode: string; status: string; text: string | null }>> {
+  const people = await readLinkedPersonCodes(env.DB);
+  const nowMilliseconds = requiredTimestamp(now);
+  const dayStart = requiredTimestamp(thaiDayRange(now).startUtc);
+  const scheduledMilliseconds = dayStart + (round === "morning" ? 8 : 17) * 60 * 60_000;
+  const target = scheduledRound(round, scheduledMilliseconds, nowMilliseconds);
+
+  const out: Array<{ personCode: string; status: string; text: string | null }> = [];
+  for (const personCode of people) {
+    const built = await buildSummary(env.DB, personCode, target, now, asker);
+    out.push({
+      personCode,
+      status: built.status,
+      text: built.status === "ready" ? built.text : null,
+    });
+  }
+  return out;
+}
+
 export async function processScheduledSummaries(
   env: Env,
   now: string,

@@ -12,7 +12,7 @@ import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
 import { askQuestion } from "./queryEngine.ts";
 import { processQueue } from "./queue.ts";
-import { processScheduledSummaries, runSummaryRoundNow } from "./summary.ts";
+import { previewSummaryRound, processScheduledSummaries, runSummaryRoundNow } from "./summary.ts";
 import type { Env } from "./types.ts";
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -264,6 +264,18 @@ async function handleAdminSummary(request: Request, env: Env, now: string): Prom
   if (round !== "morning" && round !== "evening") {
     log(now, "admin_summary", "bad_request", ref);
     return json({ ok: false, next: "send round: morning|evening" }, 400);
+  }
+
+  // preview = ดูของจริงก่อนปล่อย · ไม่ส่งหาใคร ไม่แตะ ledger ⇒ เรียกกี่ครั้งก็ได้
+  if (body.preview === true) {
+    try {
+      const previews = await previewSummaryRound(env, round, now);
+      log(now, "admin_summary", "preview", ref);
+      return json({ ok: true, round, preview: true, items: previews });
+    } catch {
+      log(now, "admin_summary", "error", ref);
+      return json({ ok: false, next: "check the D1 binding and retry" }, 503);
+    }
   }
 
   try {

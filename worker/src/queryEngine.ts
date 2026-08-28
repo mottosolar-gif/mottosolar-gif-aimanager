@@ -1022,8 +1022,37 @@ function listDisclosure(
   return parts.length > 0 ? `\n${parts.join(" · ")}` : "";
 }
 
+/**
+ * ป้ายสถานะภาษาไทย — คนอ่านคือพนักงาน ไม่ใช่ dev
+ * ค่าที่ไม่รู้จักคืนค่าดิบไปตรง ๆ ไม่เดาคำแปล และไม่กลบด้วยคำว่า "อื่น ๆ"
+ * (สถานะใหม่ที่ยังไม่ได้แปล ต้องมองเห็นได้ว่ายังไม่ได้แปล ไม่ใช่หายไปในถังรวม)
+ */
+const statusLabels: Readonly<Record<string, string>> = {
+  draft: "ร่าง",
+  assigned: "รอรับงาน",
+  accepted: "รับงานแล้ว",
+  rejected: "ปฏิเสธแล้ว",
+  en_route: "กำลังเดินทาง",
+  arrived: "ถึงหน้างานแล้ว",
+  in_progress: "กำลังทำ",
+  blocked: "ติดปัญหา",
+  completed: "เสร็จแล้ว",
+  cancelled: "ยกเลิกแล้ว",
+};
+
+/**
+ * เลขอ้างอิงที่คนอ่านรู้เรื่อง — งานที่ซิงก์มาจากฝั่ง LIVE ใช้ task_ref แบบ "L-22"
+ * ซึ่งเป็นเลขภายในที่ไม่มีความหมายกับพนักงาน ⇒ แสดงเป็น "งาน #22" แทน
+ * งานที่ไม่ได้มาจาก LIVE คงรูปเดิมไว้ ไม่แต่งให้ดูเหมือนกัน
+ */
+function taskLabel(taskRef: string): string {
+  const live = /^L-(\d+)$/.exec(taskRef);
+  return live ? `งาน #${live[1]}` : taskRef;
+}
+
 function taskText(row: TaskQueryRow | AssignedTaskQueryRow): string {
-  return `${row.task_ref}: ${shortenText(row.title, taskTitleCharacterBudget)} สถานะ ${row.status} `;
+  const status = statusLabels[row.status] ?? row.status;
+  return `${taskLabel(row.task_ref)}: ${shortenText(row.title, taskTitleCharacterBudget)} (${status}) `;
 }
 
 function shortenText(value: string, maximumLength: number): string {
