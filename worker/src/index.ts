@@ -1,5 +1,5 @@
-import { constantTimeEqual, sha256Bytes } from "./crypto.ts";
-import { enqueueEvents, personIsLinked, readHealth } from "./db/repository.ts";
+import { constantTimeEqual, hashSourceId, sha256Bytes } from "./crypto.ts";
+import { enqueueEvents, linkPerson, personIsLinked, readHealth } from "./db/repository.ts";
 import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
 import { askQuestion } from "./queryEngine.ts";
@@ -220,6 +220,94 @@ async function handleAsk(request: Request, env: Env, now: string): Promise<Respo
   }
 }
 
+const ALLOWED_ROLES = new Set(["worker", "manager", "owner"]);
+
+/**
+ * ★ WP-P2-C1 · POST /link — ผูก LINE id เข้ากับ person_code
+ *
+ * ทำไมต้องมี: คลาวด์เก็บแต่ `source_hash = sha256(salt + userId)` และ salt เป็น secret ของ Worker
+ * ส่วนฝั่งที่รู้ว่า LINE id ไหนคือใครคือ `config/aim_person_map.php` บน vendor-ksk เท่านั้น
+ * ⇒ ไม่มีฝั่งไหนผูกเองได้ ต้องให้ vendor-ksk เป็นคนบอก
+ *
+ * ★ คีย์ดวงที่ 3 แยกจาก ingest และ ask โดยเจตนา — ใครถือคีย์นี้ผูก LINE id ใดก็ได้เข้ากับ person
+ * ใดก็ได้ = สวมสิทธิ์เป็นใครก็ได้ ซึ่งอันตรายกว่าคีย์ถาม-ตอบคนละระดับ
+ */
+async function handleLink(request: Request, env: Env, now: string): Promise<Response> {
+  const ref = safeReference();
+  if (!env.AIM_LINK_KEY || !env.AIM_SOURCE_HASH_SALT) {
+    log(now, "link", "unavailable", ref);
+    return json({ ok: false, next: "configure the Worker link secrets and retry" }, 503);
+  }
+
+  const supplied = request.headers.get("X-AIM-Link-Key") ?? "";
+  let authorized = false;
+  try {
+    authorized = await constantTimeEqual(supplied, env.AIM_LINK_KEY);
+  } catch {
+    log(now, "link", "unavailable", ref);
+    return json({ ok: false, next: "check Worker cryptography support and retry" }, 503);
+  }
+  if (!authorized) {
+    log(now, "link", "forbidden", ref);
+    return json({ ok: false, next: "check caller authorization and retry" }, 403);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    log(now, "link", "invalid_payload", ref);
+    return json({ ok: false, next: "send a valid JSON body" }, 400);
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    log(now, "link", "invalid_payload", ref);
+    return json({ ok: false, next: "send a JSON object" }, 400);
+  }
+
+  const body = payload as Record<string, unknown>;
+  const personCode = body.person_code;
+  const lineUserId = body.line_user_id;
+  const department = typeof body.department === "string" ? body.department : "operations";
+  const role = typeof body.role === "string" ? body.role : "worker";
+  if (
+    typeof personCode !== "string" ||
+    !/^[A-Za-z0-9_-]{1,64}$/.test(personCode) ||
+    typeof lineUserId !== "string" ||
+    !/^U[0-9a-f]{32}$/.test(lineUserId) ||
+    department.length === 0 ||
+    department.length > 64 ||
+    !ALLOWED_ROLES.has(role)
+  ) {
+    // ห้ามสะท้อน line_user_id กลับไปในข้อความ error ไม่ว่ากรณีใด (D-P0-01)
+    log(now, "link", "invalid_payload", ref);
+    return json(
+      {
+        ok: false,
+        next: "send person_code, a LINE user id, a department, and role worker|manager|owner",
+      },
+      400,
+    );
+  }
+
+  try {
+    const sourceHash = await hashSourceId(lineUserId, env.AIM_SOURCE_HASH_SALT);
+    const outcome = await linkPerson(env.DB, personCode, sourceHash, department, role, now);
+    if (outcome.status === "conflict") {
+      // ตัวตนชนกัน — ห้ามทับเงียบ ๆ ให้คนตัดสิน · ไม่บอกว่าเจ้าของเดิมคือใคร
+      log(now, "link", "conflict", personCode);
+      return json(
+        { ok: false, next: "this LINE account is already linked to a different person; unlink it first" },
+        409,
+      );
+    }
+    log(now, "link", outcome.status, personCode);
+    return json({ ok: true, created: outcome.status === "created" });
+  } catch {
+    log(now, "link", "unavailable", ref);
+    return json({ ok: false, next: "check D1 availability and retry" }, 503);
+  }
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const now = new Date().toISOString();
@@ -260,6 +348,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       );
     }
     return handleAsk(request, env, now);
+  }
+
+  if (url.pathname === "/link") {
+    if (request.method !== "POST") {
+      log(now, "link", "method_not_allowed", safeReference());
+      return json({ ok: false, next: "call POST /link" }, 405, { allow: "POST" });
+    }
+    return handleLink(request, env, now);
   }
 
   const ref = safeReference();

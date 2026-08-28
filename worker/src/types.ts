@@ -1,5 +1,6 @@
 export interface Env {
   AIM_ASK_KEY: string;
+  AIM_LINK_KEY: string;
   AIM_INGEST_KEY: string;
   AIM_SOURCE_HASH_SALT: string;
   DB: D1Database;

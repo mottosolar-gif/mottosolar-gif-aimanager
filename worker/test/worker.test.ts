@@ -310,6 +310,7 @@ function postbackPayload(eventId: string, data: unknown): Record<string, unknown
 function makeEnv(database: MemoryD1): Env {
   return {
     AIM_ASK_KEY: "test-ask-key",
+    AIM_LINK_KEY: "test-link-key",
     AIM_INGEST_KEY: ingestKey,
     AIM_SOURCE_HASH_SALT: sourceSalt,
     DB: database as unknown as D1Database,
@@ -542,6 +543,7 @@ describe("POST /ask", () => {
   function askEnv(database: SQLiteD1, key = askKey): Env {
     return {
       AIM_ASK_KEY: key,
+      AIM_LINK_KEY: "test-link-key",
       AIM_INGEST_KEY: ingestKey,
       AIM_SOURCE_HASH_SALT: sourceSalt,
       DB: database.asD1(),
@@ -974,5 +976,160 @@ describe("scheduled queue processing", () => {
         (row) => row.action_type === "line_event_processed",
       ),
     ).toHaveLength(0);
+  });
+});
+
+// ★ WP-P2-C1 · POST /link — ผูก LINE id เข้ากับ person_code
+//   จนถึง 2026-08-28 ไม่มีโค้ด production ตัวไหนเขียน person_link เลย (2 แถวที่มีมาจากการพิมพ์
+//   wrangler ด้วยมือ) ⇒ หลัง /ask บังคับ link พนักงานคนที่ 3 จะติด 403 ตลอดกาล
+describe("POST /link", () => {
+  const linkKey = "test-link-key";
+  const lineUserId = "U" + "c".repeat(32);
+
+  function linkEnv(database: SQLiteD1, key = linkKey): Env {
+    return {
+      AIM_ASK_KEY: "test-ask-key",
+      AIM_LINK_KEY: key,
+      AIM_INGEST_KEY: ingestKey,
+      AIM_SOURCE_HASH_SALT: sourceSalt,
+      DB: database.asD1(),
+    };
+  }
+
+  function linkRequest(body: unknown, key: string | null = linkKey): Request {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (key !== null) headers.set("X-AIM-Link-Key", key);
+    return new Request("https://aim.example/link", {
+      method: "POST",
+      headers,
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+  }
+
+  const validBody = {
+    person_code: "P-NEW",
+    line_user_id: lineUserId,
+    department: "operations",
+    role: "worker",
+  };
+
+  it("links a new person and is safe to call twice", async () => {
+    const database = new SQLiteD1();
+    try {
+      const first = await handleRequest(linkRequest(validBody), linkEnv(database));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ ok: true, created: true });
+
+      const second = await handleRequest(linkRequest(validBody), linkEnv(database));
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ ok: true, created: false });
+
+      const links = await database
+        .asD1()
+        .prepare("SELECT person_code, source_hash FROM person_link")
+        .all<{ person_code: string; source_hash: string }>();
+      expect(links.results).toHaveLength(1);
+      expect(links.results[0].person_code).toBe("P-NEW");
+      // ห้ามเก็บ LINE id ดิบลงฐานเด็ดขาด (D-P0-01)
+      expect(links.results[0].source_hash).not.toContain(lineUserId);
+      expect(links.results[0].source_hash).toHaveLength(64);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses to rebind a LINE account that already belongs to someone else", async () => {
+    const database = new SQLiteD1();
+    try {
+      await handleRequest(linkRequest(validBody), linkEnv(database));
+      const stolen = await handleRequest(
+        linkRequest({ ...validBody, person_code: "P-OTHER" }),
+        linkEnv(database),
+      );
+
+      expect(stolen.status).toBe(409);
+      // ห้ามบอกว่าเจ้าของเดิมคือใคร — จะกลายเป็นเครื่องมือเดาตัวตน
+      expect(JSON.stringify(await stolen.json())).not.toContain("P-NEW");
+
+      const links = await database
+        .asD1()
+        .prepare("SELECT person_code FROM person_link")
+        .all<{ person_code: string }>();
+      expect(links.results).toHaveLength(1);
+      expect(links.results[0].person_code).toBe("P-NEW");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rejects a wrong key, a bad role, and a malformed LINE id", async () => {
+    const database = new SQLiteD1();
+    try {
+      const badKey = await handleRequest(linkRequest(validBody, "wrong"), linkEnv(database));
+      const noKey = await handleRequest(linkRequest(validBody, null), linkEnv(database));
+      const badRole = await handleRequest(
+        linkRequest({ ...validBody, role: "superuser" }),
+        linkEnv(database),
+      );
+      const badUser = await handleRequest(
+        linkRequest({ ...validBody, line_user_id: "not-a-line-id" }),
+        linkEnv(database),
+      );
+
+      expect(badKey.status).toBe(403);
+      expect(noKey.status).toBe(403);
+      expect(await badKey.json()).toEqual(await noKey.json());
+      expect(badRole.status).toBe(400);
+      expect(badUser.status).toBe(400);
+      // ข้อความ error ห้ามสะท้อน LINE id กลับไป
+      expect(JSON.stringify(await badUser.json())).not.toContain("not-a-line-id");
+
+      const links = await database.asD1().prepare("SELECT * FROM person_link").all();
+      expect(links.results).toHaveLength(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  // ★ เทสที่สำคัญที่สุดของใบนี้: ถ้าสูตรแฮชของ /link เพี้ยนจากของ payload.ts แม้แต่นิดเดียว
+  //   ระบบจะ "ผูกสำเร็จ" แต่ไม่มีวันใช้งานได้ และไม่มีอะไรฟ้องเลย
+  it("produces the same source_hash that an ingested event from that user produces", async () => {
+    const database = new SQLiteD1();
+    try {
+      await handleRequest(linkRequest(validBody), linkEnv(database));
+
+      const event = {
+        events: [
+          {
+            webhookEventId: "01JLINKPARITYCHECK000001",
+            type: "message",
+            timestamp: 1787900000000,
+            source: { type: "user", userId: lineUserId },
+            message: { type: "text", text: "ข้อความทดสอบ" },
+          },
+        ],
+      };
+      const ingest = await handleRequest(
+        new Request("https://aim.example/ingest/line", {
+          method: "POST",
+          headers: { "content-type": "application/json", "X-AIM-Key": ingestKey },
+          body: JSON.stringify(event),
+        }),
+        linkEnv(database),
+      );
+      expect(ingest.status).toBe(200);
+
+      const rows = await database
+        .asD1()
+        .prepare(
+          `SELECT (SELECT source_hash FROM person_link WHERE person_code = 'P-NEW') AS linked,
+                  (SELECT source_hash FROM inbox_event LIMIT 1) AS ingested`,
+        )
+        .all<{ linked: string; ingested: string }>();
+
+      expect(rows.results[0].ingested).toBe(rows.results[0].linked);
+    } finally {
+      database.close();
+    }
   });
 });

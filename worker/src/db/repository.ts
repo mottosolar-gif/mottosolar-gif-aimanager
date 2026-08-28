@@ -141,6 +141,58 @@ export async function personIsLinked(
   return query.results.length > 0;
 }
 
+export type LinkOutcome =
+  | { status: "created" }
+  | { status: "exists" }
+  | { status: "conflict"; existingPersonCode: string };
+
+// ★ 2026-08-28 (WP-P2-C1): ผูก person_code เข้ากับ source_hash
+//   จนถึงวันนี้ไม่มีโค้ด production ตัวไหนเขียนตารางนี้เลย — 2 แถวที่มีอยู่มาจากการพิมพ์
+//   wrangler d1 execute ด้วยมือ ⇒ พนักงานคนที่ 3 เป็นต้นไปติด 403 ตลอดกาลหลัง /ask บังคับ link
+//   ห้ามทับของเดิมเงียบ ๆ: hash เดิมที่ผูกกับคนอื่นอยู่แล้วต้องคืน conflict ให้คนตัดสิน
+export async function linkPerson(
+  db: D1Database,
+  personCode: string,
+  sourceHash: string,
+  department: string,
+  role: string,
+  now: string,
+): Promise<LinkOutcome> {
+  const existing = await db
+    .prepare("SELECT person_code FROM person_link WHERE source_hash = ?")
+    .bind(sourceHash)
+    .all<{ person_code: string }>();
+  const bound = existing.results[0]?.person_code;
+  if (bound !== undefined) {
+    return bound === personCode
+      ? { status: "exists" }
+      : { status: "conflict", existingPersonCode: bound };
+  }
+
+  // person อาจยังไม่มี — สร้างให้ แต่ถ้ามีอยู่แล้วห้ามแก้ department/role ของเดิม
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO person (person_code, department, role) VALUES (?, ?, ?)",
+    )
+    .bind(personCode, department, role)
+    .run();
+
+  await db
+    .prepare(
+      `INSERT INTO person_link (person_code, source_type, source_hash, linked_at)
+       VALUES (?, 'user', ?, ?)`,
+    )
+    .bind(personCode, sourceHash, now)
+    .run();
+
+  await db
+    .prepare(insertLedgerSql)
+    .bind("person_linked", "ok", personCode, now, now)
+    .run();
+
+  return { status: "created" };
+}
+
 export async function readInboxPostback(
   db: D1Database,
   eventId: string,
