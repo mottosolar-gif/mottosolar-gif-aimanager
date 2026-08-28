@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   askQuestion,
-  discloseCandidateLimit,
   matchQuestionIntent,
+  registeredIntents,
   thaiDayRange,
   thaiDisplayTime,
   thaiMonthRange,
@@ -127,7 +127,7 @@ const realisticPhraseCases: Array<[string, string]> = [
   ["วันนี้เสร็จกี่งาน", "my_done_today"],
   ["ใครยังไม่รับ", "team_unaccepted"],
   ["ใครงานค้างเยอะ", "team_most_open"],
-  ["สรุปวันนี้", "team_today"],
+  ["สรุปวันนี้", "my_done_today"],
   ["ใครปฏิเสธ", "team_rejected"],
   ["เมนูคำถาม", "help"],
   ["สถานะระบบ", "system_status"],
@@ -228,17 +228,28 @@ describe("ordered pattern matching", () => {
   });
 
   it.each([
+    ["งานค้างของฉันใครสั่งมา", "my_open"],
+    ["งานค้างของฉันคนไหนสั่งมา", "my_open"],
+    ["ใครยังไม่รับงานที่ผมมอบหมาย", null],
+  ])(
+    "lets first-person scope beat the bare interrogative in %s",
+    (phrase, expectedIntent) => {
+      expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+    },
+  );
+
+  it.each([
     ["งานเกินกำหนดของทีมผม", "team_overdue"],
     ["วันนี้ทีมของผมมีงานอะไรบ้าง", "team_today"],
     ["งานค้างของทีมผม", "team_most_open"],
     ["ทีมผมใครมีงานค้างเยอะสุด", "team_most_open"],
-    ["ใครยังไม่รับงานที่ผมมอบหมาย", "team_unaccepted"],
   ])("lets an explicit team cue win in %s", (phrase, expectedIntent) => {
     expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
   });
 
-  it("deliberately routes the natural bare daily summary to the actor", () => {
+  it("routes both natural bare daily-summary forms to the actor", () => {
     expect(matchQuestionIntent("สรุปงานวันนี้")).toBe("my_done_today");
+    expect(matchQuestionIntent("สรุปวันนี้")).toBe("my_done_today");
   });
 
   it.each(negativePhraseCases)("does not hijack %s", (phrase) => {
@@ -613,6 +624,52 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
+  it("bounds fastest-accept to this month and reports skipped bad timestamps", async () => {
+    const invalidTime = new SQLiteD1();
+    try {
+      await insertPerson(invalidTime, "P-TIME-OWNER", "management", "owner");
+      await insertPerson(invalidTime, "P-TIME-W", "operations", "worker");
+      await insertTask(invalidTime, {
+        ref: "T-TIME-OLD-BAD",
+        title: "ข้อมูลเก่านอกหน้าต่าง",
+        status: "accepted",
+        assignee: "P-TIME-W",
+        createdAt: "2019-01-01T00:00:00.000Z",
+        acceptedAt: "2019-01-01T25:00:00.000Z",
+      });
+      await insertTask(invalidTime, {
+        ref: "T-TIME-CURRENT-BAD",
+        title: "ข้อมูลเสียในเดือนนี้",
+        status: "accepted",
+        assignee: "P-TIME-W",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        acceptedAt: "2026-08-10T25:00:00.000Z",
+      });
+      await insertTask(invalidTime, {
+        ref: "T-TIME-CURRENT-GOOD",
+        title: "ข้อมูลดีในเดือนนี้",
+        status: "accepted",
+        assignee: "P-TIME-W",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        acceptedAt: "2026-08-20T00:05:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        invalidTime.asD1(),
+        "P-TIME-OWNER",
+        "ใครรับงานเร็วที่สุด",
+        now,
+      );
+
+      expect(answer.text).toContain("P-TIME-W รับงานเร็วที่สุด");
+      expect(answer.text).toContain("5 นาที");
+      expect(answer.text).toContain("ข้ามข้อมูลเวลาที่อ่านไม่ได้ 1 งาน");
+      expect(answer.text).not.toContain("2 งาน");
+    } finally {
+      invalidTime.close();
+    }
+  });
+
   it("keeps all four non-team statistics complete after 501 invisible rows", async () => {
     const crowded = new SQLiteD1();
     try {
@@ -676,7 +733,158 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
-  it("caps task-list display at 10 while reporting the full visible total", async () => {
+  it("class guard: every registered intent scopes visibility before truncation", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-Z-ACTOR", "operations", "manager");
+      await insertPerson(crowded, "P-A-HIDDEN", "finance", "worker");
+
+      for (let index = 1; index <= 501; index += 1) {
+        const suffix = String(index).padStart(4, "0");
+        const assignedRef = `T-A-HIDDEN-ASSIGNED-${suffix}`;
+        const completedRef = `T-A-HIDDEN-COMPLETED-${suffix}`;
+        const rejectedRef = `T-A-HIDDEN-REJECTED-${suffix}`;
+        await insertTask(crowded, {
+          ref: assignedRef,
+          title: "งานซ่อนที่เรียงก่อน",
+          status: "assigned",
+          assignee: "P-A-HIDDEN",
+          createdAt: "2026-08-27T00:00:00.000Z",
+          dueAt: "2026-08-27T00:01:00.000Z",
+        });
+        await insertTask(crowded, {
+          ref: completedRef,
+          title: "งานเสร็จที่ซ่อน",
+          status: "completed",
+          assignee: "P-A-HIDDEN",
+          createdAt: "2026-08-27T00:00:00.000Z",
+          acceptedAt: "2026-08-27T00:10:00.000Z",
+          completedAt: "2026-08-27T00:20:00.000Z",
+        });
+        await insertTask(crowded, {
+          ref: rejectedRef,
+          title: "งานปฏิเสธที่ซ่อน",
+          status: "rejected",
+          assignee: "P-A-HIDDEN",
+          createdAt: "2026-08-27T00:00:00.000Z",
+        });
+        await insertEvent(
+          crowded,
+          rejectedRef,
+          "rejected",
+          "2026-08-27T00:30:00.000Z",
+        );
+      }
+
+      for (const suffix of ["A", "B", "C", "D", "E", "F", "G"]) {
+        const assignedRef = `T-Z-VISIBLE-ASSIGNED-${suffix}`;
+        const completedRef = `T-Z-VISIBLE-COMPLETED-${suffix}`;
+        const rejectedRef = `T-Z-VISIBLE-REJECTED-${suffix}`;
+        await insertTask(crowded, {
+          ref: assignedRef,
+          title: "งานของผู้ถามที่เรียงท้าย",
+          status: "assigned",
+          assignee: "P-Z-ACTOR",
+          createdAt: "2026-08-27T08:58:00.000Z",
+          dueAt: "2026-08-27T08:59:00.000Z",
+        });
+        await insertEvent(
+          crowded,
+          assignedRef,
+          "assigned",
+          "2026-08-27T08:58:00.000Z",
+        );
+        await insertTask(crowded, {
+          ref: completedRef,
+          title: "งานเสร็จของผู้ถามที่เรียงท้าย",
+          status: "completed",
+          assignee: "P-Z-ACTOR",
+          createdAt: "2026-08-27T08:58:00.000Z",
+          acceptedAt: "2026-08-27T08:59:00.000Z",
+          completedAt: "2026-08-27T09:00:00.000Z",
+        });
+        await insertTask(crowded, {
+          ref: rejectedRef,
+          title: "งานปฏิเสธของผู้ถามที่เรียงท้าย",
+          status: "rejected",
+          assignee: "P-Z-ACTOR",
+          createdAt: "2026-08-27T08:58:00.000Z",
+        });
+        await insertEvent(
+          crowded,
+          rejectedRef,
+          "rejected",
+          "2026-08-27T08:59:00.000Z",
+        );
+        await insertTask(crowded, {
+          ref: `T-Z-VISIBLE-UNASSIGNED-${suffix}`,
+          title: "งานว่างที่เรียงท้าย",
+          status: "assigned",
+          assignee: null,
+          createdAt: "2026-08-27T08:58:00.000Z",
+        });
+      }
+
+      const base = crowded.asD1();
+      for (const registered of registeredIntents) {
+        const sqlStatements: string[] = [];
+        const observingDb = {
+          prepare(query: string): D1PreparedStatement {
+            sqlStatements.push(query);
+            return base.prepare(query);
+          },
+          batch(statements: D1PreparedStatement[]) {
+            return base.batch(statements);
+          },
+        } as unknown as D1Database;
+
+        const answer = await askQuestion(
+          observingDb,
+          "P-Z-ACTOR",
+          registered.question,
+          now,
+        );
+        expect(answer, registered.id).toMatchObject({
+          intent: registered.id,
+          matched: true,
+          denied: false,
+        });
+
+        const taskSql = sqlStatements.filter((sql) => /\bFROM\s+task\b/i.test(sql));
+        if (taskSql.length > 0) {
+          expect(answer.text, registered.id).not.toMatch(
+            /(?:ตรวจแล้ว ไม่มีงาน|เพราะไม่มีงาน|ยังไม่มีงาน|ไม่พบงาน)/,
+          );
+          const reportedTaskCounts = [...answer.text.matchAll(/(\d+) งาน/g)].map(
+            (match) => Number(match[1]),
+          );
+          const namesVisibleRow =
+            answer.text.includes("T-Z-VISIBLE") ||
+            answer.text.includes("P-Z-ACTOR");
+          expect(
+            reportedTaskCounts.length > 0 || namesVisibleRow,
+            registered.id,
+          ).toBe(true);
+          expect(
+            reportedTaskCounts.every((count) => count === 7 || count === 28),
+            registered.id,
+          ).toBe(true);
+        }
+
+        for (const sql of taskSql.filter((statement) => /\bLIMIT\b/i.test(statement))) {
+          const scopedBeforeLimit =
+            /assignee_person_code\s*=\s*\?/i.test(sql) ||
+            /assignee_person_code\s+IS\s+NULL/i.test(sql) ||
+            /GROUP\s+BY\s+(?:t\.)?assignee_person_code/i.test(sql);
+          expect(scopedBeforeLimit, `${registered.id}: ${sql}`).toBe(true);
+        }
+      }
+    } finally {
+      crowded.close();
+    }
+  }, 30_000);
+
+  it("shows all short task rows when the complete message fits", async () => {
     const crowded = new SQLiteD1();
     try {
       await insertPerson(crowded, "P-LIST-W", "operations", "worker");
@@ -698,8 +906,8 @@ describe("answers from real SQLite queries", () => {
       );
       const bullets = answer.text.split("\n").filter((line) => line.startsWith("• "));
 
-      expect(bullets).toHaveLength(10);
-      expect(answer.text).toContain("แสดง 10 จาก 12 งาน");
+      expect(bullets).toHaveLength(12);
+      expect(answer.text).not.toContain("แสดง ");
       expect(answer.text).toContain("งานของพี่ 12 งาน");
       expect(answer.text.length).toBeLessThan(5_000);
     } finally {
@@ -707,7 +915,39 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
-  it("caps the custom unaccepted-team list at 10 too", async () => {
+  it("class guard: caps long-title answers by characters, not row count", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-LONG-W", "operations", "worker");
+      for (let index = 1; index <= 12; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-LONG-${String(index).padStart(2, "0")}`,
+          title: "ก".repeat(1_000),
+          status: "assigned",
+          assignee: "P-LONG-W",
+          createdAt: "2026-08-20T00:00:00.000Z",
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-LONG-W",
+        "งานของฉันมีอะไรบ้าง",
+        now,
+      );
+      const shown = answer.text
+        .split("\n")
+        .filter((line) => line.startsWith("• ")).length;
+
+      expect(answer.text.length).toBeLessThan(5_000);
+      expect(shown).toBeGreaterThan(0);
+      expect(answer.text).toContain(`แสดง ${shown} จาก 12 งาน`);
+    } finally {
+      crowded.close();
+    }
+  });
+
+  it("shows all short custom unaccepted-team rows when they fit", async () => {
     const crowded = new SQLiteD1();
     try {
       await insertPerson(crowded, "P-LIST-M", "operations", "manager");
@@ -730,8 +970,8 @@ describe("answers from real SQLite queries", () => {
       );
       const bullets = answer.text.split("\n").filter((line) => line.startsWith("• "));
 
-      expect(bullets).toHaveLength(10);
-      expect(answer.text).toContain("แสดง 10 จาก 12 งาน");
+      expect(bullets).toHaveLength(12);
+      expect(answer.text).not.toContain("แสดง ");
       expect(answer.text).toContain("งานที่ยังไม่รับ 12 งาน");
       expect(answer.text.length).toBeLessThan(5_000);
     } finally {
@@ -739,10 +979,31 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
-  it("always appends candidate truncation disclosure even without a closing particle", () => {
-    expect(discloseCandidateLimit("ข้อความไม่มีคำลงท้าย", true)).toBe(
-      "ข้อความไม่มีคำลงท้าย โดยตัวเลขนี้คำนวณจาก 500 งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ",
-    );
+  it("caps one extreme title and discloses that the title was shortened", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-EXTREME-W", "operations", "worker");
+      await insertTask(crowded, {
+        ref: "T-EXTREME",
+        title: "ข".repeat(10_000),
+        status: "assigned",
+        assignee: "P-EXTREME-W",
+        createdAt: "2026-08-20T00:00:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-EXTREME-W",
+        "งานของฉันมีอะไรบ้าง",
+        now,
+      );
+
+      expect(answer.text.length).toBeLessThan(5_000);
+      expect(answer.text).toContain("ชื่องานที่ยาวถูกย่อด้วย …");
+      expect(answer.text).toContain("T-EXTREME");
+    } finally {
+      crowded.close();
+    }
   });
 });
 

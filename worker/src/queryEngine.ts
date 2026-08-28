@@ -1,5 +1,4 @@
 import {
-  candidateRowLimit,
   queryAcceptTimeCandidates,
   queryCompletedMonthCandidates,
   queryCycleTimeCandidates,
@@ -230,13 +229,23 @@ const intentDefinitions: readonly IntentDefinition[] = [
   },
 ];
 
+// Tests and consumers enumerate this projection of the one intent registry.
+// Do not maintain a second list of registered intents elsewhere.
+export const registeredIntents: readonly Readonly<{
+  id: IntentId;
+  question: string;
+}>[] = intentDefinitions.map((definition) => ({
+  id: definition.id,
+  question: definition.menuText,
+}));
+
 const exactIntentPhrases = new Map<string, IntentId>([
   ["งานของฉัน", "my_tasks"],
   ["งานค้าง", "my_open"],
   ["งานถัดไป", "my_next"],
   ["ใครยังไม่รับ", "team_unaccepted"],
   ["ใครงานค้างเยอะ", "team_most_open"],
-  ["สรุปวันนี้", "team_today"],
+  ["สรุปวันนี้", "my_done_today"],
   ["ใครปฏิเสธ", "team_rejected"],
   ["งานว่าง", "team_unassigned"],
   ["งานล่าสุด", "my_latest_assigned"],
@@ -256,14 +265,7 @@ const teamOnlyIntents = new Set<IntentId>([
 ]);
 
 const firstPersonMarkers = ["ของฉัน", "ของผม", "ของหนู", "ฉัน", "ผม"] as const;
-const teamScopeMarkers = [
-  "ทีม",
-  "ทุกคน",
-  "คนอื่น",
-  "ลูกน้อง",
-  "ใคร",
-  "คนไหน",
-] as const;
+const explicitTeamScopeMarkers = ["ทีม", "ทุกคน", "คนอื่น", "ลูกน้อง"] as const;
 
 const openStatuses = new Set([
   "assigned",
@@ -275,7 +277,10 @@ const openStatuses = new Set([
 ]);
 
 const thaiOffsetMilliseconds = 7 * 60 * 60 * 1_000;
-const taskListDisplayLimit = 10;
+// LINE accepts at most 5,000 UTF-16 code units. Keep 200 units in reserve
+// for transport-side decoration and always build list answers inside 4,800.
+const answerCharacterBudget = 4_800;
+const taskTitleCharacterBudget = 800;
 const thaiMonthAbbreviations = [
   "ม.ค.",
   "ก.พ.",
@@ -349,12 +354,14 @@ export function matchQuestionIntent(question: string): string | null {
   const isFirstPersonQuestion = firstPersonMarkers.some((marker) =>
     normalized.includes(marker),
   );
-  const hasTeamScope = teamScopeMarkers.some((marker) =>
+  const hasExplicitTeamScope = explicitTeamScopeMarkers.some((marker) =>
     normalized.includes(marker),
   );
   return (
     intentDefinitions.find((definition) =>
-      (!isFirstPersonQuestion || hasTeamScope || !teamOnlyIntents.has(definition.id)) &&
+      (!isFirstPersonQuestion ||
+        hasExplicitTeamScope ||
+        !teamOnlyIntents.has(definition.id)) &&
       definition.rules.some((rule) =>
         rule.every((keyword) => normalized.includes(keyword)),
       ),
@@ -497,27 +504,27 @@ async function answerIntent(
       );
     }
     case "team_unaccepted": {
-      const candidates = boundedCandidates(await queryTeamUnacceptedTasks(db));
-      const rows = await visibleRows(candidates.rows, canSee);
+      const rows = await visibleRows(await queryTeamUnacceptedTasks(db), canSee);
       if (rows.length === 0) {
         return matchedAnswer(
           intent,
-          discloseCandidateLimit(
-            "น้องกุ้งตรวจแล้ว ไม่มีงานที่มอบหมายแล้วค้างรอรับในขอบเขตที่พี่ดูได้ค่ะ",
-            candidates.truncated,
-          ),
+          "น้องกุ้งตรวจแล้ว ไม่มีงานที่มอบหมายแล้วค้างรอรับในขอบเขตที่พี่ดูได้ค่ะ",
         );
       }
-      const displayed = displayRows(rows);
-      const lines = displayed.rows.map((row) => {
-        const duration = durationText(Date.parse(now) - Date.parse(row.assigned_at));
-        return `• ${row.assignee_person_code}: ${row.task_ref}${duration ? ` รอรับมา ${duration}` : ""}`;
-      });
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          `${lines.join("\n")}${displayed.disclosure}\nน้องกุ้งพบงานที่ยังไม่รับ ${rows.length} งานค่ะ`,
-          candidates.truncated,
+        characterCappedListText(
+          rows,
+          (row) => {
+            const duration = durationText(
+              Date.parse(now) - Date.parse(row.assigned_at),
+            );
+            return {
+              text: `• ${row.assignee_person_code}: ${row.task_ref}${duration ? ` รอรับมา ${duration}` : ""}`,
+              shortened: false,
+            };
+          },
+          `น้องกุ้งพบงานที่ยังไม่รับ ${rows.length} งานค่ะ`,
         ),
       );
     }
@@ -555,31 +562,21 @@ async function answerIntent(
       );
     }
     case "team_overdue": {
-      const candidates = boundedCandidates(await queryTeamOverdueCandidates(db, now));
-      const rows = await visibleRows(
-        candidates.rows,
-        canSee,
-      );
+      const rows = await visibleRows(await queryTeamOverdueCandidates(db, now), canSee);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          taskListText(
-            rows,
-            `น้องกุ้งพบงานเกินกำหนดของทีมที่พี่ดูได้ ${rows.length} งาน`,
-            "น้องกุ้งตรวจแล้ว ไม่มีงานเกินกำหนดของทีมในขอบเขตที่พี่ดูได้ค่ะ",
-            true,
-          ),
-          candidates.truncated,
+        taskListText(
+          rows,
+          `น้องกุ้งพบงานเกินกำหนดของทีมที่พี่ดูได้ ${rows.length} งาน`,
+          "น้องกุ้งตรวจแล้ว ไม่มีงานเกินกำหนดของทีมในขอบเขตที่พี่ดูได้ค่ะ",
+          true,
         ),
       );
     }
     case "team_today": {
       const range = thaiDayRange(now);
-      const candidates = boundedCandidates(
-        await queryTeamTodayCandidates(db, range.startUtc, range.endUtc),
-      );
       const rows = await visibleRows(
-        candidates.rows,
+        await queryTeamTodayCandidates(db, range.startUtc, range.endUtc),
         canSee,
         canViewUnassigned(actor),
       );
@@ -600,40 +597,30 @@ async function answerIntent(
           : "";
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          `น้องกุ้งสรุปในขอบเขตทีมที่พี่ดูได้: งานใหม่วันนี้ ${newCount} งาน งานเสร็จวันนี้ ${completedCount} งาน งานที่มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ ${assignedOpenCount} งาน${unassignedText}ค่ะ`,
-          candidates.truncated,
-        ),
+        `น้องกุ้งสรุปในขอบเขตทีมที่พี่ดูได้: งานใหม่วันนี้ ${newCount} งาน งานเสร็จวันนี้ ${completedCount} งาน งานที่มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ ${assignedOpenCount} งาน${unassignedText}ค่ะ`,
       );
     }
     case "team_rejected": {
-      const candidates = boundedCandidates(await queryTeamRejectedCandidates(db));
-      const rows = await visibleRows(candidates.rows, canSee);
+      const rows = await visibleRows(await queryTeamRejectedCandidates(db), canSee);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          taskListText(
-            rows,
-            `น้องกุ้งพบงานที่ถูกปฏิเสธในขอบเขตทีม ${rows.length} งาน`,
-            "น้องกุ้งตรวจแล้ว ไม่มีงานที่ถูกปฏิเสธในขอบเขตทีมที่พี่ดูได้ค่ะ",
-            true,
-          ),
-          candidates.truncated,
+        taskListText(
+          rows,
+          `น้องกุ้งพบงานที่ถูกปฏิเสธในขอบเขตทีม ${rows.length} งาน`,
+          "น้องกุ้งตรวจแล้ว ไม่มีงานที่ถูกปฏิเสธในขอบเขตทีมที่พี่ดูได้ค่ะ",
+          true,
         ),
       );
     }
     case "team_unassigned": {
       if (!canViewUnassigned(actor)) return teamQuestionDeniedAnswer(intent);
-      const candidates = boundedCandidates(await queryTeamUnassignedTasks(db));
+      const rows = await queryTeamUnassignedTasks(db);
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          taskListText(
-            candidates.rows,
-            `น้องกุ้งพบงานที่ยังไม่มีผู้รับ ${candidates.rows.length} งาน`,
-            "น้องกุ้งตรวจแล้ว ไม่มีงานที่ยังไม่ได้มอบหมายค่ะ",
-          ),
-          candidates.truncated,
+        taskListText(
+          rows,
+          `น้องกุ้งพบงานที่ยังไม่มีผู้รับ ${rows.length} งาน`,
+          "น้องกุ้งตรวจแล้ว ไม่มีงานที่ยังไม่ได้มอบหมายค่ะ",
         ),
       );
     }
@@ -697,26 +684,32 @@ async function answerIntent(
       );
     }
     case "stats_fastest_accept": {
-      const rows = await visibleRows(await queryAcceptTimeCandidates(db), canSee);
-      if (rows.some((row) => Number(row.invalid_task_count) > 0)) {
-        return matchedAnswer(
-          intent,
-          "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลาสร้างและเวลารับแล้วลองถามอีกครั้งค่ะ",
-        );
-      }
+      const range = thaiMonthRange(now);
+      const rows = await visibleRows(
+        await queryAcceptTimeCandidates(db, range.startUtc, range.endUtc),
+        canSee,
+      );
+      const skippedCount = rows.reduce(
+        (total, row) => total + Number(row.invalid_task_count),
+        0,
+      );
+      const skippedText =
+        skippedCount > 0
+          ? ` โดยข้ามข้อมูลเวลาที่อ่านไม่ได้ ${skippedCount} งาน กรุณาตรวจเวลาสร้างและเวลารับของงานเหล่านั้น`
+          : "";
       const fastest = fastestAverageAccept(rows);
       if (!fastest) {
         return matchedAnswer(
           intent,
-          "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะไม่มีงานที่มีเวลาสร้างและเวลารับในขอบเขตที่พี่ดูได้ค่ะ",
+          `น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีเวลาสร้างและเวลารับที่อ่านได้ในขอบเขตที่พี่ดูได้${skippedText}ค่ะ`,
         );
       }
       const averageDuration = durationText(fastest.averageMilliseconds);
       return matchedAnswer(
         intent,
         averageDuration
-          ? `น้องกุ้งคำนวณแล้ว ${fastest.personCode} รับงานเร็วที่สุด เฉลี่ย ${averageDuration}จาก ${fastest.count} งานค่ะ`
-          : "น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้ กรุณาตรวจเวลาสร้างและเวลารับแล้วลองถามอีกครั้งค่ะ",
+          ? `น้องกุ้งคำนวณเดือนนี้แล้ว ${fastest.personCode} รับงานเร็วที่สุด เฉลี่ย ${averageDuration}จาก ${fastest.count} งาน${skippedText}ค่ะ`
+          : `น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะข้อมูลเวลาบางงานอ่านไม่ได้${skippedText}ค่ะ`,
       );
     }
     case "stats_new_today": {
@@ -819,21 +812,6 @@ function createVisibilityMemo(
   };
 }
 
-function boundedCandidates<T>(rows: T[]): { rows: T[]; truncated: boolean } {
-  return {
-    rows: rows.slice(0, candidateRowLimit),
-    truncated: rows.length > candidateRowLimit,
-  };
-}
-
-export function discloseCandidateLimit(text: string, truncated: boolean): string {
-  if (!truncated) return text;
-  const textWithoutClosingParticle = text
-    .replace(/(?:ค่ะ|คะ)\s*$/, "")
-    .trimEnd();
-  return `${textWithoutClosingParticle} โดยตัวเลขนี้คำนวณจาก ${candidateRowLimit} งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ`;
-}
-
 async function visibleRows<T extends { assignee_person_code: string | null }>(
   rows: T[],
   canSee: (targetPersonCode: string) => Promise<boolean>,
@@ -856,27 +834,90 @@ function taskListText(
   showAssignee = false,
 ): string {
   if (rows.length === 0) return emptyText;
-  const displayed = displayRows(rows);
-  const lines = displayed.rows.map((row) => {
-    const assignee = showAssignee ? ` ผู้รับ ${row.assignee_person_code}` : "";
-    return `• ${taskText(row)}${assignee}`.trimEnd();
-  });
-  return `${lines.join("\n")}${displayed.disclosure}\n${foundText}ค่ะ`;
+  return characterCappedListText(
+    rows,
+    (row) => {
+      const shortened = row.title.length > taskTitleCharacterBudget;
+      const assignee = showAssignee ? ` ผู้รับ ${row.assignee_person_code}` : "";
+      return {
+        text: `• ${taskText(row)}${assignee}`.trimEnd(),
+        shortened,
+      };
+    },
+    `${foundText}ค่ะ`,
+  );
 }
 
-function displayRows<T>(rows: T[]): { rows: T[]; disclosure: string } {
-  const displayedRows = rows.slice(0, taskListDisplayLimit);
-  return {
-    rows: displayedRows,
-    disclosure:
-      displayedRows.length < rows.length
-        ? `\nแสดง ${displayedRows.length} จาก ${rows.length} งาน`
-        : "",
-  };
+interface ListLine {
+  text: string;
+  shortened: boolean;
+}
+
+function characterCappedListText<T>(
+  rows: T[],
+  formatLine: (row: T) => ListLine,
+  footer: string,
+): string {
+  const displayed: ListLine[] = [];
+  for (const row of rows) {
+    const next = formatLine(row);
+    const candidate = [...displayed, next];
+    if (listAnswerText(candidate, rows.length, footer).length > answerCharacterBudget) {
+      break;
+    }
+    displayed.push(next);
+  }
+
+  // Every task title is independently capped, so one line plus the disclosure
+  // and footer must fit. Keep a fail-safe for future formatters that forget it.
+  if (displayed.length === 0 && rows.length > 0) {
+    const original = formatLine(rows[0] as T);
+    const disclosure = listDisclosure(1, rows.length, true);
+    const reserved = disclosure.length + footer.length + 2;
+    displayed.push({
+      text: shortenText(
+        original.text,
+        Math.max(1, answerCharacterBudget - reserved),
+      ),
+      shortened: true,
+    });
+  }
+
+  return listAnswerText(displayed, rows.length, footer);
+}
+
+function listAnswerText(
+  displayed: ListLine[],
+  totalRows: number,
+  footer: string,
+): string {
+  const disclosure = listDisclosure(
+    displayed.length,
+    totalRows,
+    displayed.some((line) => line.shortened),
+  );
+  return `${displayed.map((line) => line.text).join("\n")}${disclosure}\n${footer}`;
+}
+
+function listDisclosure(
+  shownRows: number,
+  totalRows: number,
+  shortened: boolean,
+): string {
+  const parts: string[] = [];
+  if (shownRows < totalRows) parts.push(`แสดง ${shownRows} จาก ${totalRows} งาน`);
+  if (shortened) parts.push("ชื่องานที่ยาวถูกย่อด้วย …");
+  return parts.length > 0 ? `\n${parts.join(" · ")}` : "";
 }
 
 function taskText(row: TaskQueryRow | AssignedTaskQueryRow): string {
-  return `${row.task_ref}: ${row.title} สถานะ ${row.status} `;
+  return `${row.task_ref}: ${shortenText(row.title, taskTitleCharacterBudget)} สถานะ ${row.status} `;
+}
+
+function shortenText(value: string, maximumLength: number): string {
+  if (value.length <= maximumLength) return value;
+  if (maximumLength <= 1) return "…".slice(0, maximumLength);
+  return `${value.slice(0, maximumLength - 1)}…`;
 }
 
 function durationText(milliseconds: number): string | null {

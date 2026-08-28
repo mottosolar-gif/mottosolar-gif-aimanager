@@ -47,8 +47,6 @@ const nonTerminalStatuses =
   "'draft','assigned','accepted','en_route','arrived','in_progress','blocked'";
 const openStatuses =
   "'assigned','accepted','en_route','arrived','in_progress','blocked'";
-export const candidateRowLimit = 500;
-const candidateFetchLimit = candidateRowLimit + 1;
 
 async function all<T>(
   db: D1Database,
@@ -183,8 +181,7 @@ export function queryTeamUnacceptedTasks(
      GROUP BY t.task_ref, t.title, t.status, t.assignee_person_code,
               t.created_at, t.scheduled_at, t.due_at,
               t.accepted_at, t.completed_at
-     ORDER BY assigned_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     ORDER BY assigned_at, t.task_ref`,
   );
 }
 
@@ -213,8 +210,7 @@ export function queryTeamOverdueCandidates(
      WHERE t.due_at < ?
        AND t.status NOT IN ('completed','cancelled','rejected')
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.due_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     ORDER BY t.due_at, t.task_ref`,
     now,
   );
 }
@@ -233,8 +229,7 @@ export function queryTeamTodayCandidates(
          OR (t.completed_at >= ? AND t.completed_at < ?)
          OR t.status IN (${openStatuses})
        )
-     ORDER BY t.created_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     ORDER BY t.created_at, t.task_ref`,
     startUtc,
     endUtc,
     startUtc,
@@ -251,8 +246,7 @@ export function queryTeamRejectedCandidates(
      FROM task t
      WHERE t.status = 'rejected'
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref`,
   );
 }
 
@@ -263,8 +257,7 @@ export function queryTeamUnassignedTasks(db: D1Database): Promise<TaskQueryRow[]
      FROM task t
      WHERE t.assignee_person_code IS NULL
        AND t.status IN (${nonTerminalStatuses})
-     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref
-     LIMIT ${candidateFetchLimit}`,
+     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref`,
   );
 }
 
@@ -346,25 +339,42 @@ export function queryCycleTimeCandidates(
 
 export function queryAcceptTimeCandidates(
   db: D1Database,
+  startUtc: string,
+  endUtc: string,
 ): Promise<PersonDurationAggregateQueryRow[]> {
   return all<PersonDurationAggregateQueryRow>(
     db,
     `SELECT t.assignee_person_code,
-            COUNT(*) AS task_count,
+            SUM(CASE
+              WHEN julianday(t.accepted_at) IS NOT NULL
+                AND julianday(t.created_at) IS NOT NULL
+                AND julianday(t.accepted_at) >= julianday(t.created_at) THEN 1
+              ELSE 0
+            END) AS task_count,
             CAST(ROUND(COALESCE(SUM(
-              (julianday(t.accepted_at) - julianday(t.created_at)) * 86400000.0
+              CASE
+                WHEN julianday(t.accepted_at) IS NOT NULL
+                  AND julianday(t.created_at) IS NOT NULL
+                  AND julianday(t.accepted_at) >= julianday(t.created_at)
+                THEN (julianday(t.accepted_at) - julianday(t.created_at)) * 86400000.0
+                ELSE 0
+              END
             ), 0)) AS INTEGER) AS total_milliseconds,
             SUM(CASE
               WHEN julianday(t.accepted_at) IS NULL
-                OR julianday(t.created_at) IS NULL THEN 1
+                OR julianday(t.created_at) IS NULL
+                OR julianday(t.accepted_at) < julianday(t.created_at) THEN 1
               ELSE 0
             END) AS invalid_task_count
      FROM task t
      WHERE t.accepted_at IS NOT NULL
-       AND t.accepted_at >= t.created_at
+       AND t.accepted_at >= ?
+       AND t.accepted_at < ?
        AND t.assignee_person_code IS NOT NULL
      GROUP BY t.assignee_person_code
      ORDER BY t.assignee_person_code`,
+    startUtc,
+    endUtc,
   );
 }
 
