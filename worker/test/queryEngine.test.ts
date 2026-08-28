@@ -250,6 +250,14 @@ describe("ordered pattern matching", () => {
     },
   );
 
+  it.each([
+    ["ใครยังไม่รับงานครับผม?", "team_unaccepted"],
+    ["ครับผม ใครมีงานค้างมากที่สุด", "team_most_open"],
+    ["…ครับ ครับผม", null],
+  ])("strips repeated politeness and trailing punctuation in %s", (phrase, intent) => {
+    expect(matchQuestionIntent(phrase)).toBe(intent);
+  });
+
   it.each(politenessParticles)(
     "keeps a self question self-scoped with attached politeness particle %s",
     (particle) => {
@@ -556,6 +564,58 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
+  it("counts today's team work in SQL even when 600 older rows sort first", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-TODAY-M", "operations", "manager");
+      await insertPerson(crowded, "P-TODAY-W", "operations", "worker");
+      for (let index = 1; index <= 600; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-TODAY-OLD-${String(index).padStart(4, "0")}`,
+          title: "งานค้างเก่า",
+          status: "assigned",
+          assignee: "P-TODAY-W",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+      }
+      for (let index = 1; index <= 3; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-TODAY-NEW-${index}`,
+          title: "งานใหม่วันนี้",
+          status: "assigned",
+          assignee: "P-TODAY-W",
+          createdAt: `2026-08-27T0${index}:00:00.000Z`,
+        });
+      }
+      for (let index = 1; index <= 2; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-TODAY-DONE-${index}`,
+          title: "งานเสร็จวันนี้",
+          status: "completed",
+          assignee: "P-TODAY-W",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          acceptedAt: "2026-08-27T04:00:00.000Z",
+          completedAt: `2026-08-27T0${4 + index}:00:00.000Z`,
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-TODAY-M",
+        "สรุปงานวันนี้ทั้งทีม",
+        now,
+      );
+
+      expect(answer.text).toContain("งานใหม่วันนี้ 3 งาน");
+      expect(answer.text).toContain("งานเสร็จวันนี้ 2 งาน");
+      expect(answer.text).toContain(
+        "มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ 603 งาน",
+      );
+    } finally {
+      crowded.close();
+    }
+  });
+
   it("omits the wait duration when an assigned timestamp cannot be parsed", async () => {
     const invalidTime = new SQLiteD1();
     try {
@@ -827,10 +887,75 @@ describe("answers from real SQLite queries", () => {
     }
   });
 
+  it("chunks visible people before a task query reaches 100 bound parameters", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-CHUNK-OWNER", "management", "owner");
+      for (let index = 1; index <= 120; index += 1) {
+        const suffix = String(index).padStart(3, "0");
+        const personCode = `P-CHUNK-${suffix}`;
+        await insertPerson(crowded, personCode, "operations", "worker");
+        await insertTask(crowded, {
+          ref: `T-CHUNK-${suffix}`,
+          title: "งานทดสอบเพดานพารามิเตอร์",
+          status: "assigned",
+          assignee: personCode,
+          createdAt: "2026-08-27T08:00:00.000Z",
+        });
+      }
+
+      const base = crowded.asD1();
+      let taskQueries = 0;
+      let maximumTaskBindings = 0;
+      const ceilingDb = {
+        prepare(query: string): D1PreparedStatement {
+          if (/\bFROM\s+task\b/i.test(query)) {
+            taskQueries += 1;
+            const bindings = (query.match(/\?/g) ?? []).length;
+            maximumTaskBindings = Math.max(maximumTaskBindings, bindings);
+            if (bindings > 100) throw new Error("D1 bound-parameter ceiling");
+          }
+          return base.prepare(query);
+        },
+      } as unknown as D1Database;
+
+      const answer = await askQuestion(
+        ceilingDb,
+        "P-CHUNK-OWNER",
+        "ใครมีงานค้างมากที่สุด",
+        now,
+      );
+
+      expect(answer).toMatchObject({
+        intent: "team_most_open",
+        matched: true,
+        denied: false,
+      });
+      expect(answer.text).not.toContain("อ่านข้อมูลไม่ได้");
+      expect(taskQueries).toBe(2);
+      expect(maximumTaskBindings).toBeLessThanOrEqual(100);
+    } finally {
+      crowded.close();
+    }
+  });
+
   it("class guard: every registered intent scopes visibility before truncation", async () => {
     const crowded = new SQLiteD1();
     try {
       await insertPerson(crowded, "P-Z-ACTOR", "operations", "manager");
+
+      // These rows are visible but irrelevant to today's new/completed counts.
+      // They sort before the actor's rows and reproduce the old team_today bug,
+      // where TypeScript filtered a list after SQL had already cut it at 500.
+      for (let index = 1; index <= 600; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-A-VISIBLE-OLD-UNASSIGNED-${String(index).padStart(4, "0")}`,
+          title: "งานว่างเก่าที่เรียงก่อน",
+          status: "assigned",
+          assignee: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+      }
 
       // More distinct people than the historical LIMIT 501 is essential here.
       // Hundreds of rows owned by one person cannot expose a per-person aggregate cutoff.
@@ -855,7 +980,7 @@ describe("answers from real SQLite queries", () => {
           status: "completed",
           assignee: hiddenPersonCode,
           createdAt: "2026-08-27T00:00:00.000Z",
-          acceptedAt: "2026-08-27T00:10:00.000Z",
+          acceptedAt: "2026-08-27T00:00:10.000Z",
           completedAt: "2026-08-27T00:20:00.000Z",
         });
         await insertTask(crowded, {
@@ -871,6 +996,18 @@ describe("answers from real SQLite queries", () => {
           "rejected",
           "2026-08-27T00:30:00.000Z",
         );
+        // Every hidden person owns more open work than the actor. Removing the
+        // scope from a rank aggregate must therefore change the winner.
+        for (let taskIndex = 2; taskIndex <= 8; taskIndex += 1) {
+          await insertTask(crowded, {
+            ref: `T-A-HIDDEN-ASSIGNED-${suffix}-${taskIndex}`,
+            title: "งานซ่อนเพิ่มเพื่อชนะอันดับ",
+            status: "assigned",
+            assignee: hiddenPersonCode,
+            createdAt: "2026-08-27T00:00:00.000Z",
+            dueAt: "2026-08-27T00:01:00.000Z",
+          });
+        }
       }
 
       for (const suffix of ["A", "B", "C", "D", "E", "F", "G"]) {
@@ -922,6 +1059,37 @@ describe("answers from real SQLite queries", () => {
         });
       }
 
+      const expectedCountFragments = new Map<string, string[]>([
+        ["my_tasks", ["งานของพี่ 7 งาน"]],
+        ["my_open", ["ค้างอยู่ 7 งาน"]],
+        ["my_overdue", ["เกินกำหนด 7 งาน"]],
+        ["my_done_today", ["เสร็จวันนี้ 7 งาน"]],
+        ["my_done_week", ["เสร็จสัปดาห์นี้ 7 งาน"]],
+        ["team_unaccepted", ["งานที่ยังไม่รับ 7 งาน"]],
+        ["team_most_open", ["P-Z-ACTOR: 7 งาน"]],
+        ["team_overdue", ["ทีมที่พี่ดูได้ 7 งาน"]],
+        [
+          "team_today",
+          [
+            "งานใหม่วันนี้ 28 งาน",
+            "งานเสร็จวันนี้ 7 งาน",
+            "มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ 7 งาน",
+            "ยังไม่มีผู้รับและยังเปิดอยู่ตอนนี้ 607 งาน",
+          ],
+        ],
+        ["team_rejected", ["ขอบเขตทีม 7 งาน"]],
+        ["team_unassigned", ["ยังไม่มีผู้รับ 607 งาน"]],
+        ["stats_completed_month", ["งานเสร็จ 7 งาน"]],
+        ["stats_rejected_month", ["งานถูกปฏิเสธ 7 งาน"]],
+        ["stats_avg_cycle", ["คำนวณจาก 7 งาน"]],
+        ["stats_fastest_accept", ["P-Z-ACTOR", "จาก 7 งาน"]],
+        ["stats_new_today", ["งานใหม่ 28 งาน", "ยังไม่มีผู้รับ 7 งาน"]],
+      ]);
+      const taskIntentsWithoutReportedCounts = new Set([
+        "my_next",
+        "my_latest_assigned",
+      ]);
+
       const base = crowded.asD1();
       for (const registered of registeredIntents) {
         const sqlStatements: string[] = [];
@@ -946,6 +1114,8 @@ describe("answers from real SQLite queries", () => {
           matched: true,
           denied: false,
         });
+        expect(answer.text, registered.id).not.toContain("P-A-HIDDEN-");
+        expect(answer.text, registered.id).not.toContain("T-A-HIDDEN-");
 
         const taskSql = sqlStatements.filter((sql) => /\bFROM\s+task\b/i.test(sql));
         for (const sql of taskSql.filter((statement) => /\bLIMIT\b/i.test(statement))) {
@@ -961,20 +1131,24 @@ describe("answers from real SQLite queries", () => {
           expect(answer.text, registered.id).not.toMatch(
             /(?:ตรวจแล้ว ไม่มีงาน|เพราะไม่มีงาน|ยังไม่มีงาน|ไม่พบงาน)/,
           );
-          const reportedTaskCounts = [...answer.text.matchAll(/(\d+) งาน/g)].map(
-            (match) => Number(match[1]),
-          );
           const namesVisibleRow =
             answer.text.includes("T-Z-VISIBLE") ||
             answer.text.includes("P-Z-ACTOR");
-          expect(
-            reportedTaskCounts.length > 0 || namesVisibleRow,
-            registered.id,
-          ).toBe(true);
-          expect(
-            reportedTaskCounts.every((count) => count === 7 || count === 28),
-            registered.id,
-          ).toBe(true);
+          const expectedCounts = expectedCountFragments.get(registered.id);
+          if (taskIntentsWithoutReportedCounts.has(registered.id)) {
+            expect(namesVisibleRow, registered.id).toBe(true);
+          } else {
+            if (!expectedCounts) {
+              throw new Error(`Missing hand-counted fixture for ${registered.id}`);
+            }
+            for (const expectedCount of expectedCounts) {
+              expect(answer.text, registered.id).toContain(expectedCount);
+            }
+            expect(
+              taskSql.some((sql) => /\b(?:COUNT|SUM)\s*\(/i.test(sql)),
+              `${registered.id} must compute reported counts in SQL`,
+            ).toBe(true);
+          }
         }
 
       }
@@ -1100,8 +1274,9 @@ describe("answers from real SQLite queries", () => {
         now,
       );
 
-      expect(answer.text).toContain("คำนวณจาก 500 งานแรกตามลำดับคิวเท่านั้น");
-      expect(answer.text).toContain("เพราะมีงานมากกว่าขีดจำกัดค่ะ");
+      expect(answer.text).toContain("งานที่ยังไม่รับ 501 งาน");
+      expect(answer.text).toContain("แสดงรายละเอียด 500 งานแรกตามลำดับคิวเท่านั้น");
+      expect(answer.text).toContain("จำนวนรวมคำนวณจากงานทั้งหมดที่ตรงเงื่อนไขค่ะ");
       expect(answer.text.length).toBeLessThan(5_000);
     } finally {
       crowded.close();

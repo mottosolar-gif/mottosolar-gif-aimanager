@@ -1,8 +1,17 @@
 name: test-and-deploy
 
+# ★ 2026-08-28 (พี่เต้เคาะ): push เข้า main = รันเทสอย่างเดียว · deploy ต้องสั่งด้วยมือเท่านั้น
+#   เดิม push แล้ว deploy ขึ้น Cloudflare production อัตโนมัติ ซึ่งขัดกติกาบ้านข้อ
+#   "อนุมัติดีไซน์ ≠ อนุมัติปล่อยจริง" — การปล่อยต้องมีคำสั่งของมันเองเสมอ
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'พิมพ์ deploy เพื่อยืนยันว่าจะปล่อยขึ้น production จริง'
+        required: true
+        default: 'no'
 
 permissions:
   contents: read
@@ -31,6 +40,8 @@ jobs:
 
   deploy:
     needs: test
+    # ปล่อยจริงเมื่อคนกดสั่งเองและพิมพ์ยืนยันว่า deploy เท่านั้น — push เฉย ๆ ไม่ปล่อย
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == 'deploy'
     runs-on: ubuntu-latest
     environment: production
     steps:

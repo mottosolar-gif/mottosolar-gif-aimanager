@@ -15,10 +15,11 @@ import {
   queryTeamOpenCandidates,
   queryTeamOverdueCandidates,
   queryTeamRejectedCandidates,
-  queryTeamTodayCandidates,
+  queryTeamTodayCounts,
   queryTeamUnacceptedTasks,
   queryTeamUnassignedTasks,
   type AssignedTaskQueryRow,
+  type CountedTaskQueryRow,
   type PersonDurationAggregateQueryRow,
   type PersonTaskCountQueryRow,
   type TaskQueryRow,
@@ -280,15 +281,6 @@ const teamOnlyIntents = new Set<IntentId>(
 const firstPersonMarkers = ["ของฉัน", "ของผม", "ของหนู", "ฉัน", "ผม"] as const;
 const explicitTeamScopeMarkers = ["ทีม", "ทุกคน", "คนอื่น", "ลูกน้อง"] as const;
 
-const openStatuses = new Set([
-  "assigned",
-  "accepted",
-  "en_route",
-  "arrived",
-  "in_progress",
-  "blocked",
-]);
-
 const thaiOffsetMilliseconds = 7 * 60 * 60 * 1_000;
 // LINE accepts at most 5,000 UTF-16 code units. Keep 200 units in reserve
 // for transport-side decoration and always build list answers inside 4,800.
@@ -434,34 +426,43 @@ async function answerIntent(
   switch (intent) {
     case "my_tasks": {
       const rows = await queryMyTasks(db, actor.personCode);
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         taskListText(
           rows,
-          `น้องกุ้งพบงานของพี่ ${rows.length} งาน`,
+          `น้องกุ้งพบงานของพี่ ${totalCount} งาน`,
           "น้องกุ้งตรวจแล้ว ไม่พบงานที่ยังไม่จบของพี่ค่ะ",
+          false,
+          totalCount,
         ),
       );
     }
     case "my_open": {
       const rows = await queryMyOpenTasks(db, actor.personCode);
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         taskListText(
           rows,
-          `น้องกุ้งพบงานของพี่ที่ค้างอยู่ ${rows.length} งาน`,
+          `น้องกุ้งพบงานของพี่ที่ค้างอยู่ ${totalCount} งาน`,
           "น้องกุ้งตรวจแล้ว ไม่มีงานค้างของพี่ค่ะ",
+          false,
+          totalCount,
         ),
       );
     }
     case "my_overdue": {
       const rows = await queryMyOverdueTasks(db, actor.personCode, now);
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         taskListText(
           rows,
-          `น้องกุ้งพบงานของพี่ที่เกินกำหนด ${rows.length} งาน`,
+          `น้องกุ้งพบงานของพี่ที่เกินกำหนด ${totalCount} งาน`,
           "น้องกุ้งตรวจแล้ว ไม่มีงานของพี่ที่เกินกำหนดค่ะ",
+          false,
+          totalCount,
         ),
       );
     }
@@ -473,12 +474,15 @@ async function answerIntent(
         range.startUtc,
         range.endUtc,
       );
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         taskListText(
           rows,
-          `น้องกุ้งพบงานที่พี่ทำเสร็จวันนี้ ${rows.length} งาน`,
+          `น้องกุ้งพบงานที่พี่ทำเสร็จวันนี้ ${totalCount} งาน`,
           "น้องกุ้งตรวจแล้ว วันนี้ยังไม่มีงานของพี่ที่เสร็จค่ะ",
+          false,
+          totalCount,
         ),
       );
     }
@@ -490,12 +494,15 @@ async function answerIntent(
         range.startUtc,
         range.endUtc,
       );
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         taskListText(
           rows,
-          `น้องกุ้งพบงานที่พี่ทำเสร็จสัปดาห์นี้ ${rows.length} งาน`,
+          `น้องกุ้งพบงานที่พี่ทำเสร็จสัปดาห์นี้ ${totalCount} งาน`,
           "น้องกุ้งตรวจแล้ว สัปดาห์นี้ยังไม่มีงานของพี่ที่เสร็จค่ะ",
+          false,
+          totalCount,
         ),
       );
     }
@@ -522,6 +529,7 @@ async function answerIntent(
         await queryTeamUnacceptedTasks(db, await visiblePersonCodes()),
       );
       const rows = candidates.rows;
+      const totalCount = reportedTaskCount(rows);
       if (rows.length === 0) {
         return matchedAnswer(
           intent,
@@ -545,7 +553,8 @@ async function answerIntent(
                 shortened: false,
               };
             },
-            `น้องกุ้งพบงานที่ยังไม่รับ ${rows.length} งานค่ะ`,
+            `น้องกุ้งพบงานที่ยังไม่รับ ${totalCount} งานค่ะ`,
+            totalCount,
           ),
           candidates.truncated,
         ),
@@ -589,14 +598,16 @@ async function answerIntent(
         await queryTeamOverdueCandidates(db, now, await visiblePersonCodes()),
       );
       const rows = candidates.rows;
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         discloseCandidateLimit(
           taskListText(
             rows,
-            `น้องกุ้งพบงานเกินกำหนดของทีมที่พี่ดูได้ ${rows.length} งาน`,
+            `น้องกุ้งพบงานเกินกำหนดของทีมที่พี่ดูได้ ${totalCount} งาน`,
             "น้องกุ้งตรวจแล้ว ไม่มีงานเกินกำหนดของทีมในขอบเขตที่พี่ดูได้ค่ะ",
             true,
+            totalCount,
           ),
           candidates.truncated,
         ),
@@ -604,37 +615,24 @@ async function answerIntent(
     }
     case "team_today": {
       const range = thaiDayRange(now);
-      const candidates = boundedCandidates(
-        await queryTeamTodayCandidates(
-          db,
-          range.startUtc,
-          range.endUtc,
-          await visiblePersonCodes(),
-          canViewUnassigned(actor),
-        ),
+      const counts = await queryTeamTodayCounts(
+        db,
+        range.startUtc,
+        range.endUtc,
+        await visiblePersonCodes(),
+        canViewUnassigned(actor),
       );
-      const rows = candidates.rows;
-      const newCount = rows.filter((row) => inRange(row.created_at, range)).length;
-      const completedCount = rows.filter(
-        (row) => row.completed_at && inRange(row.completed_at, range),
-      ).length;
-      const assignedOpenCount = rows.filter(
-        (row) =>
-          row.assignee_person_code !== null && openStatuses.has(row.status),
-      ).length;
-      const unassignedOpenCount = rows.filter(
-        (row) => row.assignee_person_code === null && openStatuses.has(row.status),
-      ).length;
+      const newCount = Number(counts.new_count);
+      const completedCount = Number(counts.completed_count);
+      const assignedOpenCount = Number(counts.assigned_open_count);
+      const unassignedOpenCount = Number(counts.unassigned_open_count);
       const unassignedText =
         unassignedOpenCount > 0
           ? ` งานที่ยังไม่มีผู้รับและยังเปิดอยู่ตอนนี้ ${unassignedOpenCount} งาน`
           : "";
       return matchedAnswer(
         intent,
-        discloseCandidateLimit(
-          `น้องกุ้งสรุปในขอบเขตทีมที่พี่ดูได้: งานใหม่วันนี้ ${newCount} งาน งานเสร็จวันนี้ ${completedCount} งาน งานที่มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ ${assignedOpenCount} งาน${unassignedText}ค่ะ`,
-          candidates.truncated,
-        ),
+        `น้องกุ้งสรุปในขอบเขตทีมที่พี่ดูได้: งานใหม่วันนี้ ${newCount} งาน งานเสร็จวันนี้ ${completedCount} งาน งานที่มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ ${assignedOpenCount} งาน${unassignedText}ค่ะ`,
       );
     }
     case "team_rejected": {
@@ -642,14 +640,16 @@ async function answerIntent(
         await queryTeamRejectedCandidates(db, await visiblePersonCodes()),
       );
       const rows = candidates.rows;
+      const totalCount = reportedTaskCount(rows);
       return matchedAnswer(
         intent,
         discloseCandidateLimit(
           taskListText(
             rows,
-            `น้องกุ้งพบงานที่ถูกปฏิเสธในขอบเขตทีม ${rows.length} งาน`,
+            `น้องกุ้งพบงานที่ถูกปฏิเสธในขอบเขตทีม ${totalCount} งาน`,
             "น้องกุ้งตรวจแล้ว ไม่มีงานที่ถูกปฏิเสธในขอบเขตทีมที่พี่ดูได้ค่ะ",
             true,
+            totalCount,
           ),
           candidates.truncated,
         ),
@@ -658,13 +658,16 @@ async function answerIntent(
     case "team_unassigned": {
       if (!canViewUnassigned(actor)) return teamQuestionDeniedAnswer(intent);
       const candidates = boundedCandidates(await queryTeamUnassignedTasks(db));
+      const totalCount = reportedTaskCount(candidates.rows);
       return matchedAnswer(
         intent,
         discloseCandidateLimit(
           taskListText(
             candidates.rows,
-            `น้องกุ้งพบงานที่ยังไม่มีผู้รับ ${candidates.rows.length} งาน`,
+            `น้องกุ้งพบงานที่ยังไม่มีผู้รับ ${totalCount} งาน`,
             "น้องกุ้งตรวจแล้ว ไม่มีงานที่ยังไม่ได้มอบหมายค่ะ",
+            false,
+            totalCount,
           ),
           candidates.truncated,
         ),
@@ -814,14 +817,27 @@ async function answerIntent(
 }
 
 function normalizeQuestion(question: string): string {
-  return question
+  let normalized = question
     .trim()
     .replace(/\s+/g, " ")
     .replace(/^(?:ai\b\s*|เอไอ(?:\s+|$))/i, "")
     .trim()
-    .toLowerCase()
-    .replace(/(?:\s*(?:ครับผม|นะครับ|นะคะ|ครับ|ค่ะ|คะ|จ้า|ฮะ))+$/u, "")
-    .trim();
+    .toLowerCase();
+  let previous: string;
+  do {
+    previous = normalized;
+    normalized = normalized
+      .replace(/[?？!！.,。…]+$/u, "")
+      .trim()
+      .replace(
+        /(^|\s)(?:ครับผม|นะครับ|นะคะ|ครับ|ค่ะ|คะ|จ้า|ฮะ)(?=\s|$)/gu,
+        "$1",
+      )
+      .replace(/(?:\s*(?:ครับผม|นะครับ|นะคะ|ครับ|ค่ะ|คะ|จ้า|ฮะ))+$/u, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  } while (normalized !== previous);
+  return normalized;
 }
 
 function isCompletionStatement(question: string): boolean {
@@ -891,8 +907,9 @@ async function resolveVisiblePersonCodes(
   db: D1Database,
   canSee: (targetPersonCode: string) => Promise<boolean>,
 ): Promise<string[]> {
-  // This first read is naturally bounded by headcount. Every task query receives
-  // only codes approved by canView(), so visibility is structural before LIMIT.
+  // Revisit this full person-table scan when headcount reaches 500. Until then it
+  // keeps canView() as the single policy decision; task queries chunk approved
+  // codes so this scan cannot push a D1 statement over its parameter ceiling.
   const people = await db
     .prepare("SELECT person_code FROM person ORDER BY person_code")
     .all<PersonCodeQueryRow>();
@@ -916,7 +933,7 @@ function discloseCandidateLimit(text: string, truncated: boolean): string {
   const textWithoutClosingParticle = text
     .replace(/(?:ค่ะ|คะ)\s*$/u, "")
     .trimEnd();
-  return `${textWithoutClosingParticle} โดยตัวเลขนี้คำนวณจาก ${candidateRowLimit} งานแรกตามลำดับคิวเท่านั้น เพราะมีงานมากกว่าขีดจำกัดค่ะ`;
+  return `${textWithoutClosingParticle} โดยแสดงรายละเอียด ${candidateRowLimit} งานแรกตามลำดับคิวเท่านั้น แต่จำนวนรวมคำนวณจากงานทั้งหมดที่ตรงเงื่อนไขค่ะ`;
 }
 
 function taskListText(
@@ -924,6 +941,7 @@ function taskListText(
   foundText: string,
   emptyText: string,
   showAssignee = false,
+  totalRows = rows.length,
 ): string {
   if (rows.length === 0) return emptyText;
   return characterCappedListText(
@@ -937,6 +955,7 @@ function taskListText(
       };
     },
     `${foundText}ค่ะ`,
+    totalRows,
   );
 }
 
@@ -949,12 +968,13 @@ function characterCappedListText<T>(
   rows: T[],
   formatLine: (row: T) => ListLine,
   footer: string,
+  totalRows = rows.length,
 ): string {
   const displayed: ListLine[] = [];
   for (const row of rows) {
     const next = formatLine(row);
     const candidate = [...displayed, next];
-    if (listAnswerText(candidate, rows.length, footer).length > answerCharacterBudget) {
+    if (listAnswerText(candidate, totalRows, footer).length > answerCharacterBudget) {
       break;
     }
     displayed.push(next);
@@ -964,7 +984,7 @@ function characterCappedListText<T>(
   // and footer must fit. Keep a fail-safe for future formatters that forget it.
   if (displayed.length === 0 && rows.length > 0) {
     const original = formatLine(rows[0] as T);
-    const disclosure = listDisclosure(1, rows.length, true);
+    const disclosure = listDisclosure(1, totalRows, true);
     const reserved = disclosure.length + footer.length + 2;
     displayed.push({
       text: shortenText(
@@ -975,7 +995,7 @@ function characterCappedListText<T>(
     });
   }
 
-  return listAnswerText(displayed, rows.length, footer);
+  return listAnswerText(displayed, totalRows, footer);
 }
 
 function listAnswerText(
@@ -1051,6 +1071,10 @@ function sumTaskCounts(rows: PersonTaskCountQueryRow[]): number {
   return rows.reduce((total, row) => total + Number(row.task_count), 0);
 }
 
+function reportedTaskCount(rows: CountedTaskQueryRow[]): number {
+  return Number(rows[0]?.total_count ?? 0);
+}
+
 function fastestAverageAccept(
   rows: PersonDurationAggregateQueryRow[],
 ): { personCode: string; averageMilliseconds: number; count: number } | null {
@@ -1074,9 +1098,6 @@ function fastestAverageAccept(
   return ranked[0] ?? null;
 }
 
-function inRange(value: string, range: UtcRange): boolean {
-  return value >= range.startUtc && value < range.endUtc;
-}
 
 function helpText(): string {
   const lines = [...intentDefinitions]
