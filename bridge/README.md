@@ -1,8 +1,27 @@
-# bridge
+# bridge — เหลือเฉพาะ config ตัวอย่าง (ไม่มีสำเนาโค้ดแล้ว)
 
-`aim_forward.php` ส่งสำเนา LINE event ของกลุ่มทดสอบไปยัง AI Manager แบบ fire-and-forget และ `aim.credentials.example.php` เป็น config ตัวอย่างที่ไม่มี secret จริง
+โฟลเดอร์นี้เก็บ **config ตัวอย่างที่ไม่มี secret จริง** เท่านั้น
+โค้ดฝั่ง LIVE ทั้งหมดมีบ้านเดียวคือ `C:\WebApp\vendor-ksk\` — อ่านและแก้ที่นั่นเสมอ
 
-**สถานะ: ติดตั้งแล้วจริงบน production (2026-08-27)**
+| ของจริงที่รันอยู่ | ยามที่เฝ้ามัน |
+|---|---|
+| `vendor-ksk/lib/aim_forward.php` | `vendor-ksk/bin/smoke_aim_forward.php` (16 ข้อ) |
+| `vendor-ksk/lib/aim_ask.php` | `vendor-ksk/bin/smoke_aim_ask.php` (29 ข้อ) |
+| `vendor-ksk/lib/aim_notify.php` · `vendor-ksk/api/aim_notify.php` | — |
+| `vendor-ksk/bin/aim_link_person.php` | — |
+
+## ทำไมสำเนาโค้ดถูกลบ (2026-08-28)
+
+เคยมี `aim_forward.php` · `aim_notify.php` · `api_aim_notify.php` และเทส `.ps1` วางไว้ที่นี่เป็น staging
+**แล้วมันเบี่ยงจากของจริงจนอันตราย** — วัดวันที่ลบ: `aim_forward.php` ต่าง 12 บรรทัด ·
+`api_aim_notify.php` ต่าง 9 บรรทัดและ **ขาดแพตช์ `is_scalar` ทั้ง 3 จุด** ที่ code-reviewer สั่งแก้
+(กัน type-confusion ทำ path ของเซิร์ฟเวอร์หลุด — D-P0-10) ⇒ ใครก๊อปทับของจริงคือย้อนแพตช์ความปลอดภัยทิ้ง
+
+ซ้ำร้าย `test_aim_forward.ps1` อ่านไฟล์จาก **โฟลเดอร์นี้** ไม่ใช่ไฟล์ที่รันจริง ⇒ เป็นยามที่เฝ้าผิดตัว
+และให้ความมั่นใจปลอม · ตอนนี้ยามตัวจริงอยู่ที่ `vendor-ksk/bin/smoke_aim_*.php` ซึ่งเทสต์ไฟล์ที่รันจริง
+และพิสูจน์แล้วว่า**ตกได้จริง** (ซ่อนคอนฟิก/ขยาย timeout แล้วยามตกทันที)
+
+**กติกา: ห้ามเอาสำเนาโค้ดกลับมาวางที่นี่อีก** — สำเนา = ความจริงสองชุด คือรากบั๊กหนักสุดของ estate นี้
 
 1. `aim_forward.php` ถูกคัดลอกไปที่ `C:\WebApp\vendor-ksk\lib\aim_forward.php` (ไม่ใช่ `api/` — เป็นไลบรารีฟังก์ชัน ไม่ใช่ endpoint ของตัวเอง)
 2. `aim.credentials.example.php` ถูกคัดลอกไปเป็น `C:\WebApp\vendor-ksk\config\aim.credentials.php` (ไม่เข้า git ตาม pattern `config/*.credentials.php` ที่มีอยู่แล้ว) พร้อมค่าจริง

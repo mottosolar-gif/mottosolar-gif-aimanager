@@ -150,21 +150,23 @@ taskMachine 17 · visibility 10 · queueTaskAction 6) · migration check ผ่�
 - **ข้อความไทยที่ส่งเป็น inline argument ผ่าน Bash บนเครื่อง Windows นี้จะเพี้ยน** — เขียน JSON ลงไฟล์แล้วส่งด้วย
   `curl --data-binary @file`
 - **ไฟล์ `.ps1` ต้องเป็น ASCII ล้วน** (PS 5.1 อ่านไฟล์ไม่มี BOM เป็น ANSI)
-- **สไตล์ PHP ฝั่ง LIVE ถูกบังคับด้วยเทส ไม่ใช่ด้วย runtime** — `bridge/test_aim_forward.ps1` ตกงานถ้าเจอ arrow fn,
-  `??=`, `declare(strict_types)`, typed property, return type (PHP จริงเป็น 8.1.9 รันได้ แต่เทสไม่ให้ผ่าน — ตั้งใจให้เข้ากับ vendor-ksk)
+- **สไตล์ PHP ฝั่ง LIVE ต้องเข้ากับ vendor-ksk** — ห้าม arrow fn, `??=`, `declare(strict_types)`,
+  typed property, return type (PHP จริงเป็น 8.1.9 รันได้ทั้งหมด แต่ทั้ง estate เขียนสไตล์เดียวกัน)
+  ⚠ **2026-08-28: ไม่มีเทสบังคับข้อนี้แล้ว** — ตัวที่เคยบังคับคือ `bridge/test_aim_forward.ps1`
+  ซึ่งถูกลบไปพร้อมสำเนาโค้ดที่มันเทสต์ (ดู §7) ⇒ ตอนนี้เป็นวินัยของคนเขียน ไม่ใช่ของเครื่อง
 
 ---
 
-## 7. ของที่ซ้ำซ้อนอยู่ตอนนี้ (ต้องระวัง — ยังไม่ได้แก้)
+## 7. เรื่องสำเนา — แก้ไปแล้ว 2 จุด (2026-08-28) เก็บไว้เป็นบทเรียน
 
-1. **`bridge/api_aim_notify.php` เก่ากว่าของจริงและขาดแพตช์ความปลอดภัย**
-   ตรวจแล้ว: ของจริง `vendor-ksk/api/aim_notify.php` มี `is_scalar` 3 จุด · สำเนาใน `bridge/` มี **0 จุด**
-   ⇒ **ก๊อป bridge → live เมื่อไร = ย้อนแพตช์ที่ code-reviewer สั่งแก้ทิ้งเงียบ ๆ**
-   ซ้ำร้าย `test_aim_forward.ps1` เทสต์ **สำเนาใน `bridge/`** ไม่ใช่ไฟล์ที่รันจริง ⇒ ยามไม่ได้เฝ้าของจริง
-   **ความจริงอยู่ที่ `C:\WebApp\vendor-ksk\` เสมอ · `bridge/` เป็นแค่ staging**
-2. **`C:\WebApp\vendor-ksk\docs\ai-manager\` เป็นสำเนาแช่แข็งของเอกสาร 4 ฉบับ** (byte-identical) และ **ไม่มี**
-   `DECISIONS_P0.md` · `WORK_PACKAGES_P1/P2.md` ⇒ ใครอ่านจากตรงนั้นจะเห็นโลกแค่ยุค P0
-   **เอกสารตัวจริงอยู่ที่ `C:\WebApp\aim\docs\` เท่านั้น**
+1. ~~`bridge/api_aim_notify.php` เก่ากว่าของจริงและขาดแพตช์ความปลอดภัย~~ **ลบสำเนาโค้ดทิ้งทั้งหมดแล้ว**
+   ตอนวัดก่อนลบ: `aim_forward.php` ต่างจากของจริง 12 บรรทัด · `api_aim_notify.php` ต่าง 9 บรรทัด
+   และ **ขาด `is_scalar` ทั้ง 3 จุด** ที่ code-reviewer สั่งแก้ (D-P0-10) ⇒ ก๊อปทับเมื่อไรคือย้อนแพตช์ทิ้ง
+   ซ้ำร้าย `test_aim_forward.ps1` เทสต์สำเนา ไม่ใช่ไฟล์ที่รันจริง = ยามที่เฝ้าผิดตัว
+   **ตอนนี้ `bridge/` เหลือแต่ config ตัวอย่าง · โค้ดฝั่ง LIVE มีบ้านเดียวที่ `C:\WebApp\vendor-ksk\`
+   และมียามจริงคือ `bin/smoke_aim_forward.php` (16) กับ `bin/smoke_aim_ask.php` (29) ที่เทสต์ไฟล์ที่รันจริง**
+   ⛔ **ห้ามเอาสำเนาโค้ดกลับมาวางใน `bridge/` อีก**
+2. ~~`vendor-ksk\docs\ai-manager\` เป็นสำเนาแช่แข็ง 4 ฉบับ~~ **ลบแล้ว เหลือ README ชี้มาที่ `aim\docs\`**
 3. **เอกสารในรีโปนี้ที่ล้าสมัยจนทำให้รายงานผิดได้:**
    `README.md` เขียนว่า "ไม่มี Cron, consumer, bridge, การ deploy จริง" — **ผิดทั้ง 4 ข้อ** ·
    `HANDOFF.md` ยังบอกขอบเขต P0-1..3 / "7 tests" / อ้าง `npm run privacy:check` ที่ถูกลบไปแล้ว ·
