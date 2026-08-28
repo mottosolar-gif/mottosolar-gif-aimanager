@@ -5,6 +5,7 @@ import {
   type TaskRow,
 } from "../src/taskMachine.ts";
 import { applyTaskTransition } from "../src/db/repository.ts";
+import { SQLiteD1 } from "./helpers/sqliteD1.ts";
 
 interface StoredTask {
   id: number;
@@ -327,5 +328,32 @@ describe("task state machine", () => {
     ).rejects.toThrow("task not found: TASK-MISSING");
     expect(database.batchCalls).toBe(0);
     expect(database.taskEvents).toHaveLength(0);
+  });
+
+  it("ปฏิเสธการเปลี่ยนสถานะงานที่เป็นสำเนาจากฝั่ง LIVE", async () => {
+    const database = new SQLiteD1();
+    try {
+      await database
+        .asD1()
+        .prepare("INSERT INTO person (person_code, department, role) VALUES ('P-M','operations','worker')")
+        .run();
+      await database
+        .asD1()
+        .prepare("INSERT INTO task (task_ref, title, status, assignee_person_code) VALUES ('L-99','งานจากฝั่ง LIVE','assigned','P-M')")
+        .run();
+
+      // ความจริงอยู่ที่ tbl_task ฝั่ง LIVE — เขียนที่นี่จะถูกซิงก์ทับใน 10 นาที
+      await expect(
+        applyTransition(database.asD1(), "L-99", "accepted", "P-M", "line", null, "2026-08-28T01:00:00.000Z"),
+      ).rejects.toThrow(/read-only/);
+
+      const row = await database
+        .asD1()
+        .prepare("SELECT status FROM task WHERE task_ref = 'L-99'")
+        .first<{ status: string }>();
+      expect(row?.status).toBe("assigned");
+    } finally {
+      database.close();
+    }
   });
 });

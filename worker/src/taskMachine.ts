@@ -77,6 +77,15 @@ export async function applyTransition(
   note: string | null,
   now: string,
 ): Promise<TaskRow> {
+  // ★ 2026-08-28 (D-P0-17): งานที่ขึ้นต้น "L-" เป็น **สำเนา** ของ db_customs.tbl_task ฝั่ง LIVE
+  // ความจริงอยู่ที่โน่น ⇒ เขียนที่นี่จะถูก ksk-aim-task-sync ทับกลับภายใน 10 นาที
+  // = ผู้ใช้กดปุ่มแล้วเห็นว่าสำเร็จ แล้วมันหายไป ซึ่งแย่กว่าไม่มีปุ่ม
+  // ปุ่มบนการ์ดถูกเปลี่ยนให้ยิงเข้า ll_task_postback() ฝั่ง LIVE แล้ว (lib/aim_notify.php)
+  // ด่านนี้เป็นชั้นที่สอง เผื่อการ์ดเก่าที่ส่งไปแล้วยังมีปุ่ม aim_* ค้างอยู่ในแชตของใครสักคน
+  if (taskRef.startsWith("L-")) {
+    throw new Error("mirrored task is read-only here: " + taskRef);
+  }
+
   const current = await readTaskByRef(db, taskRef);
   if (!current) throw new Error("task not found: " + taskRef);
 
