@@ -82,6 +82,7 @@ class MemoryStatement {
 }
 
 class MemoryD1 {
+  readonly deadEvents: string[] = [];
   inboxEvents: StoredInbox[] = [];
   jobs: StoredJob[] = [];
   personLinks: Array<{ person_code: string; source_hash: string }> = [];
@@ -254,6 +255,12 @@ class MemoryD1 {
       }
       return result([], job ? 1 : 0);
     }
+    // ★ 2026-08-28 — killJob ปิดแถวใน inbox_event ตามไปด้วย (เดิมปล่อยค้าง 'pending' ตลอดกาล)
+    if (/UPDATE inbox_event SET status = 'dead'/i.test(statement.query)) {
+      const [, eventId] = statement.values;
+      this.deadEvents.push(String(eventId));
+      return result([], 1);
+    }
     if (/SET status = 'dead', attempts = \?/is.test(statement.query)) {
       const [attempts, lastError, jobId] = statement.values;
       const job = this.jobs.find((row) => row.id === Number(jobId));
@@ -371,6 +378,10 @@ describe("LINE postback task actions", () => {
     expect(job.status).toBe("dead");
     expect(job.attempts).toBe(5);
     expect(job.last_error).toContain("invalid transition");
+    // ★ แถวใน inbox_event ต้องถูกปิดตามไปด้วย — ไม่งั้นเหลือ 'pending' ค้างตลอดกาล
+    // job บอกว่า "เลิกแล้ว" แต่ inbox บอกว่า "ยังไม่ได้ทำ" = ความจริงสองชุด
+    // และ /healthz มองไม่เห็น เพราะมันนับแต่ job ที่ pending ⇒ ของค้างเงียบสนิท (เกิดจริง 27 ส.ค.)
+    expect(database.deadEvents).toEqual(["evt-invalid-transition"]);
     expect(task.status).toBe("draft");
     expect(database.taskEvents).toHaveLength(0);
   });

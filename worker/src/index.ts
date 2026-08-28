@@ -46,6 +46,10 @@ async function handleHealth(env: Env, now: string): Promise<Response> {
         ts: now,
         queueDepth: null,
         lastIngestAt: null,
+        // รูปร่างต้องเหมือนตอนปกติเสมอ — ผู้อ่าน (selfcheck) จะได้แยก "อ่านค่าไม่ได้" (null)
+        // ออกจาก "ไม่มีของค้าง" (0) ได้ · ถ้าไม่ใส่ field มาเลย ผู้อ่านจะตีความเป็น 0 แล้วเงียบ
+        deadJobs: null,
+        strandedEvents: null,
         next: "check the D1 binding and apply migrations, then retry",
       },
       503,

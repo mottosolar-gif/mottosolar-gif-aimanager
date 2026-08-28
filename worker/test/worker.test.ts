@@ -17,6 +17,7 @@ interface StoredInbox {
   payload_sha256: string;
   status: string;
   body_ref: null;
+  last_error?: string | null;   // killJob เขียนลงแถวนี้ด้วยตั้งแต่ 2026-08-28
 }
 
 interface StoredJob {
@@ -252,6 +253,31 @@ class MemoryD1 {
           created_at: String(createdAt),
         });
         return result([], 1);
+      }
+      // ★ 2026-08-28 — /healthz มองเห็นของที่ตายและของที่ค้างแล้ว (เดิมเห็นแต่คิว pending)
+      if (/status = 'dead'/i.test(statement.query) && /COUNT\(\*\) AS n/i.test(statement.query)) {
+        return result([{ n: this.jobs.filter((job) => job.status === "dead").length }]);
+      }
+      if (/inbox_event/i.test(statement.query) && /COUNT\(\*\) AS n/i.test(statement.query)) {
+        // เกณฑ์เดียวกับของจริง: ยัง pending และรับเข้ามาเกิน 15 นาทีแล้ว
+        const cutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+        return result([
+          {
+            n: this.inboxEvents.filter(
+              (row) => row.status === "pending" && String(row.received_at) < cutoff,
+            ).length,
+          },
+        ]);
+      }
+      // ★ killJob ปิดแถว inbox ตามไปด้วย — ถ้าไม่รู้จักประโยคนี้ เทสจะฟ้องว่า D1 ไม่รองรับ
+      if (/UPDATE inbox_event SET status = 'dead'/i.test(statement.query)) {
+        const [lastError, eventId] = statement.values;
+        const row = this.inboxEvents.find((r) => r.event_id === String(eventId));
+        if (row) {
+          row.status = "dead";
+          row.last_error = String(lastError);
+        }
+        return result([], row ? 1 : 0);
       }
       if (/COUNT\(\*\) AS depth/i.test(statement.query)) {
         return result([{ depth: this.jobs.filter((job) => job.status === "pending").length }]);

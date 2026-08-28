@@ -99,19 +99,37 @@ export async function enqueueEvents(
   return { accepted, duplicates };
 }
 
+// ★ 2026-08-28: เดิมรายงานแต่ queueDepth (นับ job_queue ที่ pending) ซึ่ง **มองไม่เห็นของที่ตายไปแล้ว**
+// เกิดจริง: event 01M117EB8R3HTYZ64VDV36104Y ตายตั้งแต่ 27 ส.ค. แต่ /healthz ตอบ queueDepth:0 ok:true
+// ⇒ เป็นยามที่ให้ความมั่นใจปลอม ซึ่งอันตรายกว่าไม่มียาม เพราะทำให้เลิกมองหาปัญหา
+//
+// deadJobs   = งานที่ยอมแพ้ถาวรแล้ว (สะสม ไม่ลดเอง) — ต้องมีคนตัดสินว่าจะตามเก็บหรือปล่อย
+// strandedEvents = แถวใน inbox_event ที่ยัง pending เกิน 15 นาที ทั้งที่ cron เดินทุกนาที
+//   15 นาทีเผื่อ retry ปกติ (30+60+120+240 วิ ≈ 8 นาที) ไว้แล้ว ⇒ เกินนี้คือค้างจริง ไม่ใช่กำลังรอ
 export async function readHealth(db: D1Database): Promise<{
   queueDepth: number;
   lastIngestAt: string | null;
+  deadJobs: number;
+  strandedEvents: number;
 }> {
-  const [queue, ingest] = await db.batch([
+  const [queue, ingest, dead, stranded] = await db.batch([
     db.prepare("SELECT COUNT(*) AS depth FROM job_queue WHERE status = 'pending'"),
     db.prepare("SELECT MAX(received_at) AS last_ingest_at FROM inbox_event"),
+    db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE status = 'dead'"),
+    db.prepare(
+      `SELECT COUNT(*) AS n FROM inbox_event
+       WHERE status = 'pending' AND received_at < datetime('now', '-15 minutes')`,
+    ),
   ]);
   const queueRow = queue.results[0] as { depth?: number | string } | undefined;
   const ingestRow = ingest.results[0] as { last_ingest_at?: string | null } | undefined;
+  const deadRow = dead.results[0] as { n?: number | string } | undefined;
+  const strandedRow = stranded.results[0] as { n?: number | string } | undefined;
   return {
     queueDepth: Number(queueRow?.depth ?? 0),
     lastIngestAt: ingestRow?.last_ingest_at ?? null,
+    deadJobs: Number(deadRow?.n ?? 0),
+    strandedEvents: Number(strandedRow?.n ?? 0),
   };
 }
 
@@ -518,6 +536,14 @@ export async function killJob(
          WHERE id = ?`,
       )
       .bind(attempts, errorMessage, jobId),
+    // ★ 2026-08-28: ต้องปิดแถวใน inbox_event ตามไปด้วย
+    // เดิมฆ่าแต่ job แล้วปล่อยแถว inbox ค้าง 'pending' ตลอดกาล ⇒ ความจริงสองชุด:
+    // job_queue บอกว่า "เลิกแล้ว" แต่ inbox_event บอกว่า "ยังไม่ได้ทำ"
+    // เกิดจริง: event 01M117EB8R3HTYZ64VDV36104Y ค้างตั้งแต่ 27 ส.ค. โดยไม่มีอะไรฟ้อง
+    // และ /healthz ก็มองไม่เห็น เพราะมันนับแต่ job_queue ที่ pending
+    db
+      .prepare("UPDATE inbox_event SET status = 'dead', last_error = ? WHERE event_id = ?")
+      .bind(errorMessage, eventId),
     db
       .prepare(insertLedgerSql)
       .bind("line_event_processed", "dead", eventId, now, now),
