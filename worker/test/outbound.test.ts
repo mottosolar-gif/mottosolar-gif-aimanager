@@ -68,6 +68,22 @@ describe("text notification outbound adapter", () => {
       sendTextNotification(env(), "P-ASSIST", "x", "idem", permanent),
     ).resolves.toEqual({ ok: false, reason: "http_404", retryable: false });
 
+    // ตัวคั่นหน้าปลายทาง (IIS/ARR) ตอบสองรหัสนี้ได้ ทั้งที่ปลายทางไม่ได้ปฏิเสธ
+    // เหมาว่าถาวร = สรุปรอบนั้นตายโดยไม่มีการลองใหม่
+    for (const status of [408, 429]) {
+      const throttled = vi.fn(async () => new Response("later", { status }));
+      await expect(
+        sendTextNotification(env(), "P-ASSIST", "x", "idem", throttled),
+      ).resolves.toEqual({ ok: false, reason: `http_${status}`, retryable: true });
+    }
+
+    for (const status of [400, 401, 403, 404, 409]) {
+      const refused = vi.fn(async () => new Response("no", { status }));
+      await expect(
+        sendTextNotification(env(), "P-ASSIST", "x", "idem", refused),
+      ).resolves.toEqual({ ok: false, reason: `http_${status}`, retryable: false });
+    }
+
     const malformed = vi.fn(async () => new Response("not-json", { status: 200 }));
     await expect(
       sendTextNotification(env(), "P-ASSIST", "x", "idem", malformed),

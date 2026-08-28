@@ -8,6 +8,16 @@ export type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<
 
 const notifyTimeoutMilliseconds = 10_000;
 
+// 4xx ส่วนใหญ่ลองใหม่กี่ครั้งก็เหมือนเดิม แต่ 408/429 บอกว่า "ตอนนี้ยังไม่ได้" ไม่ใช่ "ไม่มีวันได้"
+// ฝั่งรับไม่เคยตอบสองรหัสนี้ แต่ IIS/ARR ที่คั่นอยู่หน้าเขาตอบได้ (Dynamic IP Restriction ตอบ 429)
+// เหมารวมว่าถาวร = สรุปรอบนั้นตายเพราะตัวคั่น ไม่ใช่เพราะปลายทางปฏิเสธจริง
+const retryableClientStatuses: ReadonlySet<number> = new Set([408, 429]);
+
+function isRetryableStatus(status: number): boolean {
+  if (status < 400 || status >= 500) return true;
+  return retryableClientStatuses.has(status);
+}
+
 export async function sendTextNotification(
   env: Env,
   personCode: string,
@@ -37,7 +47,7 @@ export async function sendTextNotification(
       return {
         ok: false,
         reason: `http_${response.status}`,
-        retryable: response.status < 400 || response.status >= 500,
+        retryable: isRetryableStatus(response.status),
       };
     }
 
