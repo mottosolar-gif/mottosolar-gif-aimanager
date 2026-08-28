@@ -1,7 +1,8 @@
 import { constantTimeEqual, sha256Bytes } from "./crypto.ts";
-import { enqueueEvents, readHealth } from "./db/repository.ts";
+import { enqueueEvents, personIsLinked, readHealth } from "./db/repository.ts";
 import { writeSafeLog } from "./logger.ts";
 import { extractMetadata, InvalidPayloadError } from "./payload.ts";
+import { askQuestion } from "./queryEngine.ts";
 import { processQueue } from "./queue.ts";
 import type { Env } from "./types.ts";
 
@@ -18,6 +19,10 @@ function safeReference(): string {
 
 function log(ts: string, eventType: string, result: string, ref: string): void {
   writeSafeLog({ ts, eventType, result, ref });
+}
+
+function logAsk(ts: string, result: string, intent: string, length: number): void {
+  writeSafeLog({ ts, eventType: "ask", result, ref: `${intent}:${length}` });
 }
 
 async function handleHealth(env: Env, now: string): Promise<Response> {
@@ -114,6 +119,107 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
   }
 }
 
+async function handleAsk(request: Request, env: Env, now: string): Promise<Response> {
+  if (!env.AIM_ASK_KEY) {
+    logAsk(now, "unavailable", "none", 0);
+    return json(
+      { ok: false, next: "configure the Worker ask secret and retry" },
+      503,
+    );
+  }
+
+  const suppliedKey = request.headers.get("X-AIM-Ask-Key") ?? "";
+  let authorized = false;
+  try {
+    authorized = await constantTimeEqual(suppliedKey, env.AIM_ASK_KEY);
+  } catch {
+    logAsk(now, "unavailable", "none", 0);
+    return json(
+      { ok: false, next: "check Worker cryptography support and retry" },
+      503,
+    );
+  }
+  if (!authorized) {
+    logAsk(now, "forbidden", "none", 0);
+    return json({ ok: false, next: "check caller authorization and retry" }, 403);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    logAsk(now, "invalid_payload", "none", 0);
+    return json(
+      { ok: false, next: "send a valid JSON body with person_code and question" },
+      400,
+    );
+  }
+
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    logAsk(now, "invalid_payload", "none", 0);
+    return json(
+      { ok: false, next: "send a JSON object with person_code and question" },
+      400,
+    );
+  }
+
+  const body = payload as Record<string, unknown>;
+  const personCode = body.person_code;
+  const question = body.question;
+  // ★ F6 (code-reviewer 2026-08-28): นับความยาวเป็น code point ให้ตรงกับ mb_strlen ฝั่ง PHP
+  //   เดิมใช้ .length ซึ่งนับเป็น UTF-16 unit ⇒ คำถามที่มีอิโมจิเยอะและฝั่ง PHP ถือว่าผ่าน
+  //   จะโดนที่นี่ตอบ 400 แล้วผู้ใช้เห็นเป็นข้อความขอโทษลอย ๆ โดยไม่มีใครรู้สาเหตุ
+  if (
+    typeof personCode !== "string" ||
+    !/^[A-Za-z0-9_-]{1,64}$/.test(personCode) ||
+    typeof question !== "string" ||
+    [...question].length > 500
+  ) {
+    logAsk(now, "invalid_payload", "none", 0);
+    return json(
+      {
+        ok: false,
+        next: "send person_code as 1-64 letters, digits, underscores or hyphens and question as at most 500 characters",
+      },
+      400,
+    );
+  }
+
+  // ★ F7: รับเฉพาะคนที่ผูกบัญชีจริงแล้ว — คำตอบที่ส่งกลับเหมือน 403 ของคีย์ผิดทุกตัวอักษร
+  //   เพื่อไม่ให้กลายเป็นเครื่องมือเดาว่ามีใครอยู่ในระบบบ้าง · แยกความต่างไว้ที่ log ฝั่งเราเท่านั้น
+  let linked = false;
+  try {
+    linked = await personIsLinked(env.DB, personCode);
+  } catch {
+    logAsk(now, "unavailable", "none", 0);
+    return json(
+      { ok: false, next: "check D1 availability and retry the same question" },
+      503,
+    );
+  }
+  if (!linked) {
+    logAsk(now, "unlinked", "none", 0);
+    return json({ ok: false, next: "check caller authorization and retry" }, 403);
+  }
+
+  try {
+    const answer = await askQuestion(
+      env.DB,
+      personCode,
+      question,
+      new Date().toISOString(),
+    );
+    logAsk(now, "ok", answer.intent, answer.text.length);
+    return json({ ok: true, ...answer });
+  } catch {
+    logAsk(now, "unavailable", "none", 0);
+    return json(
+      { ok: false, next: "check D1 availability and retry the same question" },
+      503,
+    );
+  }
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const now = new Date().toISOString();
@@ -144,10 +250,22 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return handleIngest(request, env, now);
   }
 
+  if (url.pathname === "/ask") {
+    if (request.method !== "POST") {
+      logAsk(now, "method_not_allowed", "none", 0);
+      return json(
+        { ok: false, next: "call POST /ask" },
+        405,
+        { allow: "POST" },
+      );
+    }
+    return handleAsk(request, env, now);
+  }
+
   const ref = safeReference();
   log(now, "request", "not_found", ref);
   return json(
-    { ok: false, next: "use GET /healthz or POST /ingest/line" },
+    { ok: false, next: "use GET /healthz, POST /ingest/line or POST /ask" },
     404,
   );
 }

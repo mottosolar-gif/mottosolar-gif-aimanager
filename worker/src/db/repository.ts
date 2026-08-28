@@ -127,6 +127,20 @@ export async function findPersonCodeBySourceHash(
   return query.results[0]?.person_code ?? null;
 }
 
+// ★ 2026-08-28 (WP-P2-B2 · F7 จาก code-reviewer): เดิม /ask เชื่อ person_code ที่ผู้เรียกส่งมา
+//   โดยไม่ตรวจอะไรเลย ⇒ ใครถือ AIM_ASK_KEY ถามแทนใครก็ได้ ต่างจากเส้นทางปุ่มกดที่ taskMachine
+//   ตรวจ ownership ซ้ำอีกชั้น · รับเฉพาะคนที่ผูกบัญชีจริงแล้ว = ชั้นป้องกันที่ได้จากข้อมูลที่มีอยู่แล้ว
+export async function personIsLinked(
+  db: D1Database,
+  personCode: string,
+): Promise<boolean> {
+  const query = await db
+    .prepare("SELECT 1 AS linked FROM person_link WHERE person_code = ? LIMIT 1")
+    .bind(personCode)
+    .all<{ linked: number }>();
+  return query.results.length > 0;
+}
+
 export async function readInboxPostback(
   db: D1Database,
   eventId: string,

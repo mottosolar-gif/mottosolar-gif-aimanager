@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../src/index.ts";
 import { processQueue } from "../src/queue.ts";
 import type { Env } from "../src/types.ts";
+import { SQLiteD1 } from "./helpers/sqliteD1.ts";
 
 interface StoredInbox {
   event_id: string;
@@ -308,6 +309,7 @@ function postbackPayload(eventId: string, data: unknown): Record<string, unknown
 
 function makeEnv(database: MemoryD1): Env {
   return {
+    AIM_ASK_KEY: "test-ask-key",
     AIM_INGEST_KEY: ingestKey,
     AIM_SOURCE_HASH_SALT: sourceSalt,
     DB: database as unknown as D1Database,
@@ -527,6 +529,273 @@ describe("aim-ingest Worker", () => {
     expect(response.status).toBe(400);
     expect(database.inboxEvents).toHaveLength(0);
     expect(database.jobs).toHaveLength(0);
+  });
+});
+
+describe("POST /ask", () => {
+  const askKey = "test-ask-key";
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  function askEnv(database: SQLiteD1, key = askKey): Env {
+    return {
+      AIM_ASK_KEY: key,
+      AIM_INGEST_KEY: ingestKey,
+      AIM_SOURCE_HASH_SALT: sourceSalt,
+      DB: database.asD1(),
+    };
+  }
+
+  function askRequest(body: string, key: string | null = askKey): Request {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (key !== null) headers.set("X-AIM-Ask-Key", key);
+    return new Request("https://aim.example/ask", {
+      method: "POST",
+      headers,
+      body,
+    });
+  }
+
+  function askDatabase(): SQLiteD1 {
+    const database = new SQLiteD1();
+    database.exec(
+      "INSERT INTO person (person_code, department, role) VALUES ('P-ASSIST', 'operations', 'worker')",
+    );
+    // ★ F7: /ask รับเฉพาะคนที่ผูกบัญชีแล้ว ⇒ ฐานทดสอบต้องมี person_link เหมือนของจริง
+    database.exec(
+      "INSERT INTO person_link (person_code, source_type, source_hash, linked_at) VALUES ('P-ASSIST', 'user', '" +
+        "a".repeat(64) +
+        "', '2026-08-28T00:00:00.000Z')",
+    );
+    return database;
+  }
+
+  it("returns a query-engine answer when the ask key is correct", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(
+          JSON.stringify({
+            person_code: "P-ASSIST",
+            question: "งานของฉันมีอะไรบ้าง",
+          }),
+        ),
+        askEnv(database),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        intent: "my_tasks",
+        matched: true,
+        denied: false,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses a person who has no person_link, indistinguishably from a bad key", async () => {
+    const database = askDatabase();
+    try {
+      // มีแถวใน person แต่ยังไม่เคยผูกบัญชี — เป็นคนที่ระบบรู้จักแต่ยังยืนยันตัวตนไม่ได้
+      database.exec(
+        "INSERT INTO person (person_code, department, role) VALUES ('P-NOLINK', 'operations', 'worker')",
+      );
+      const unlinked = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-NOLINK", question: "งานของฉันมีอะไรบ้าง" })),
+        askEnv(database),
+      );
+      const ghost = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-GHOST", question: "งานของฉันมีอะไรบ้าง" })),
+        askEnv(database),
+      );
+      const badKey = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉันมีอะไรบ้าง" }), "wrong"),
+        askEnv(database),
+      );
+
+      expect(unlinked.status).toBe(403);
+      // คนที่มีตัวตนแต่ยังไม่ผูก · คนที่ไม่มีตัวตนเลย · คีย์ผิด — ต้องแยกจากกันไม่ได้เลย
+      // ไม่งั้น endpoint กลายเป็นเครื่องมือเดาว่ามีใครอยู่ในระบบบ้าง
+      const [a, b, c] = await Promise.all([unlinked.json(), ghost.json(), badKey.json()]);
+      expect(a).toEqual(b);
+      expect(a).toEqual(c);
+      expect(ghost.status).toBe(403);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("accepts a question whose length is legal in code points but not UTF-16 units", async () => {
+    const database = askDatabase();
+    try {
+      // 300 อิโมจิ = 300 code point (PHP ผ่าน) แต่ 600 UTF-16 unit (โค้ดเดิมตอบ 400)
+      const emojiQuestion = "งานของฉันมีอะไรบ้าง " + "🦐".repeat(300);
+      expect([...emojiQuestion].length).toBeLessThanOrEqual(500);
+      expect(emojiQuestion.length).toBeGreaterThan(500);
+
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: emojiQuestion })),
+        askEnv(database),
+      );
+
+      expect(response.status).toBe(200);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns the same 403 shape for a wrong or missing ask key", async () => {
+    const database = askDatabase();
+    try {
+      const wrong = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉัน" }), "wrong"),
+        askEnv(database),
+      );
+      const missing = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉัน" }), null),
+        askEnv(database),
+      );
+
+      expect(wrong.status).toBe(403);
+      expect(missing.status).toBe(403);
+      expect(await wrong.json()).toEqual(await missing.json());
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns 503 with a next step when the ask secret is not configured", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉัน" })),
+        askEnv(database, ""),
+      );
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ ok: false, next: expect.any(String) });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns 400 with a next step for malformed JSON", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(askRequest("{broken"), askEnv(database));
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ ok: false, next: expect.any(String) });
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each([
+    { person_code: "P ASSIST", question: "งานของฉัน" },
+    { person_code: ["P-ASSIST"], question: "งานของฉัน" },
+  ])("returns 400 for an invalid person_code: %j", async (body) => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify(body)),
+        askEnv(database),
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns 400 when the question is longer than 500 characters", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "ก".repeat(501) })),
+        askEnv(database),
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns unmatched rather than an error for an unknown question pattern", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "คำถามที่ไม่มีแพตเทิร์น 987654" })),
+        askEnv(database),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        intent: "unmatched",
+        matched: false,
+        denied: false,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns denied for a worker asking a team question", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "ใครยังไม่รับงาน" })),
+        askEnv(database),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        intent: "team_unaccepted",
+        matched: true,
+        denied: true,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("never logs question or answer text", async () => {
+    const database = askDatabase();
+    const privateQuestion = "ข้อความลับห้ามอยู่ในล็อก-ask-12345";
+    try {
+      const response = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: privateQuestion })),
+        askEnv(database),
+      );
+      const body = await response.text();
+      const logs = JSON.stringify(vi.mocked(console.log).mock.calls);
+
+      expect(response.status).toBe(200);
+      expect(body).not.toBe("");
+      expect(logs).not.toContain(privateQuestion);
+      expect(logs).not.toContain("น้องกุ้งยังไม่เข้าใจคำถามนี้");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns 405 with Allow: POST for other methods", async () => {
+    const database = askDatabase();
+    try {
+      const response = await handleRequest(
+        new Request("https://aim.example/ask", { method: "GET" }),
+        askEnv(database),
+      );
+
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("POST");
+      expect(await response.json()).toMatchObject({ ok: false, next: "call POST /ask" });
+    } finally {
+      database.close();
+    }
   });
 });
 

@@ -17,7 +17,8 @@ npm test
 ```
 
 ถ้าจะเปิด Worker local ให้สร้าง `worker/.dev.vars` (ไฟล์นี้ถูก ignore) และใส่
-`AIM_INGEST_KEY` กับ `AIM_SOURCE_HASH_SALT` จาก secret manager แล้วรัน:
+`AIM_INGEST_KEY` · `AIM_SOURCE_HASH_SALT` · `AIM_ASK_KEY` จาก secret manager แล้วรัน:
+(ไม่ใส่ `AIM_ASK_KEY` = `POST /ask` ตอบ 503 โดยไม่บอกสาเหตุ — WP-P2-B2)
 
 ```powershell
 npm run dev
