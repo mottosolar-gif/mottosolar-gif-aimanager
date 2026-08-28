@@ -54,3 +54,11 @@ export async function canView(
   // Workers and unknown roles are fail-closed for every other person.
   return false;
 }
+
+export function canAskTeamQuestion(actor: PersonRow): boolean {
+  return actor.role === "manager" || actor.role === "owner";
+}
+
+export function canViewUnassigned(actor: PersonRow): boolean {
+  return actor.role === "manager" || actor.role === "owner";
+}

@@ -1,0 +1,901 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+// @ts-expect-error The repo intentionally has no @types/node dependency.
+import { readFileSync } from "node:fs";
+import {
+  askQuestion,
+  matchQuestionIntent,
+  thaiDayRange,
+  thaiDisplayTime,
+  thaiMonthRange,
+  thaiWeekRange,
+} from "../src/queryEngine.ts";
+import { SQLiteD1 } from "./helpers/sqliteD1.ts";
+
+const now = "2026-08-27T09:00:00.000Z";
+
+interface TaskSeed {
+  ref: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  createdAt: string;
+  dueAt?: string;
+  acceptedAt?: string;
+  completedAt?: string;
+}
+
+let database: SQLiteD1;
+
+beforeEach(async () => {
+  database = new SQLiteD1();
+  await seedScenario(database);
+});
+
+afterEach(() => {
+  database.close();
+});
+
+describe("Thai UTC ranges", () => {
+  it("pins Thai day, Monday-start week, and month boundaries", () => {
+    expect(thaiDayRange(now)).toEqual({
+      startUtc: "2026-08-26T17:00:00.000Z",
+      endUtc: "2026-08-27T17:00:00.000Z",
+    });
+    expect(thaiWeekRange(now)).toEqual({
+      startUtc: "2026-08-23T17:00:00.000Z",
+      endUtc: "2026-08-30T17:00:00.000Z",
+    });
+    expect(thaiMonthRange(now)).toEqual({
+      startUtc: "2026-07-31T17:00:00.000Z",
+      endUtc: "2026-08-31T17:00:00.000Z",
+    });
+  });
+
+  it("formats Bangkok time across a UTC day boundary", () => {
+    expect(thaiDisplayTime("2026-08-27T17:30:00.000Z")).toBe(
+      "28 ส.ค. 2569 00:30 น.",
+    );
+  });
+});
+
+describe("SQLite D1 adapter", () => {
+  it("uses the migrated schema and supports first, run, and atomic batch results", async () => {
+    const person = await database
+      .asD1()
+      .prepare("SELECT person_code FROM person WHERE person_code = ?")
+      .bind("P-W1")
+      .first<{ person_code: string }>();
+    expect(person).toEqual({ person_code: "P-W1" });
+
+    const results = await database.asD1().batch([
+      database
+        .asD1()
+        .prepare(
+          "INSERT INTO ledger (action_type, outcome, occurred_at) VALUES ('adapter_test', 'ok', ?)",
+        )
+        .bind("2026-08-27T09:00:01.000Z"),
+      database
+        .asD1()
+        .prepare(
+          "INSERT INTO ledger (action_type, outcome, occurred_at) VALUES ('adapter_test', 'ok', ?)",
+        )
+        .bind("2026-08-27T09:00:02.000Z"),
+    ]);
+
+    expect(results.map((result) => result.meta.changes)).toEqual([1, 1]);
+    const count = await database
+      .asD1()
+      .prepare("SELECT COUNT(*) AS count FROM ledger WHERE action_type = 'adapter_test'")
+      .first<number>("count");
+    expect(count).toBe(2);
+  });
+});
+
+const canonicalMenuCases: Array<[string, string]> = [
+  ["งานของฉันมีอะไรบ้าง", "my_tasks"],
+  ["งานที่ค้างอยู่ตอนนี้", "my_open"],
+  ["งานที่เกินกำหนดแล้ว", "my_overdue"],
+  ["งานที่เสร็จวันนี้", "my_done_today"],
+  ["งานที่เสร็จสัปดาห์นี้", "my_done_week"],
+  ["งานถัดไปที่ต้องทำ", "my_next"],
+  ["งานล่าสุดที่ได้รับมอบหมาย", "my_latest_assigned"],
+  ["ใครยังไม่รับงาน", "team_unaccepted"],
+  ["ใครมีงานค้างมากที่สุด", "team_most_open"],
+  ["งานที่เกินกำหนดของทีม", "team_overdue"],
+  ["สรุปงานวันนี้ทั้งทีม", "team_today"],
+  ["ใครปฏิเสธงานบ้าง", "team_rejected"],
+  ["งานที่ยังไม่มีคนรับ", "team_unassigned"],
+  ["งานเสร็จกี่ใบเดือนนี้", "stats_completed_month"],
+  ["งานถูกปฏิเสธกี่ใบเดือนนี้", "stats_rejected_month"],
+  ["เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน", "stats_avg_cycle"],
+  ["ใครรับงานเร็วที่สุด", "stats_fastest_accept"],
+  ["วันนี้มีงานใหม่กี่ใบ", "stats_new_today"],
+  ["AI ช่วยอะไรได้บ้าง", "help"],
+  ["สถานะระบบ", "system_status"],
+];
+
+const realisticPhraseCases: Array<[string, string]> = [
+  ["งานของฉัน", "my_tasks"],
+  ["งานค้าง", "my_open"],
+  ["งานเกินกำหนด", "my_overdue"],
+  ["งานฉันมีอะไรบ้าง", "my_tasks"],
+  ["ฉันมีงานค้างกี่งาน", "my_open"],
+  ["งานที่เลยกำหนด", "my_overdue"],
+  ["มีงานอะไรบ้าง", "my_tasks"],
+  ["งานถัดไป", "my_next"],
+  ["วันนี้เสร็จกี่งาน", "my_done_today"],
+  ["ใครยังไม่รับ", "team_unaccepted"],
+  ["ใครงานค้างเยอะ", "team_most_open"],
+  ["สรุปวันนี้", "team_today"],
+  ["ใครปฏิเสธ", "team_rejected"],
+  ["เมนูคำถาม", "help"],
+  ["สถานะระบบ", "system_status"],
+  ["งานว่าง", "team_unassigned"],
+  ["สัปดาห์นี้เสร็จกี่งาน", "my_done_week"],
+  ["งานล่าสุด", "my_latest_assigned"],
+  ["ทีมงานเกินกำหนด", "team_overdue"],
+  ["เดือนนี้เสร็จกี่งาน", "stats_completed_month"],
+  ["เดือนนี้ปฏิเสธกี่งาน", "stats_rejected_month"],
+  ["เฉลี่ยใช้เวลากี่นาที", "stats_avg_cycle"],
+  ["ใครรับเร็วสุด", "stats_fastest_accept"],
+  ["วันนี้งานใหม่กี่งาน", "stats_new_today"],
+];
+
+const negativePhraseCases = [
+  "สวัสดีค่ะ",
+  "ขอบคุณค่ะ",
+  "ลาป่วยพรุ่งนี้",
+  "เบิกเครื่องมือ",
+  "ลงเวลา",
+  "5ส วันนี้",
+  "ok",
+  "งานเสร็จแล้วครับ",
+  "ค้างจ่ายอยู่ตอนนี้เท่าไหร่",
+  "เกินกำหนดชำระเงินแล้วครับ",
+  "เอกสารเกินกำหนดส่งแล้ว",
+  "overdue payment reminder",
+  "ใครยังไม่รับเงินเดือน",
+  "ใครยังไม่รับของที่หน้าโรงงาน",
+  "ใครไม่รับสายครับ",
+  "ประชุมเสร็จเดือนนี้",
+  "เฉลี่ยใช้เวลาเดินทางกี่นาที",
+  "สรุปประชุมวันนี้",
+  "สรุปว่าวันนี้หยุดนะครับ",
+  "สรุปยอดของเข้าวันนี้",
+  "เมนูอาหารกลางวันวันนี้",
+  "เมนูใหม่ในแอปอยู่ตรงไหน",
+  "ปิดเมนูวันหยุดให้หน่อย",
+  "งานว่างเปล่าไม่มีคนทำ",
+  "งานล่าสุดที่ทำคือติดตั้งประตู",
+  "พรุ่งนี้งานถัดไปคือติดตั้งเครน",
+  "งานฉันเสร็จแล้วครับ",
+  "วันนี้ทำงานเสร็จหมดแล้วครับ",
+  "ไม่มีงานค้างแล้วครับ",
+];
+
+const shadowingRegressionCases: Array<[string, string | null]> = [
+  ["สถานะงานของฉันตอนนี้เป็นยังไง", "my_tasks"],
+  ["งานของฉันสถานะอะไรบ้าง", "my_tasks"],
+  ["ขอดูสถานะงาน T-123 หน่อย", null],
+  ["สถานะการเบิกเครื่องมือ", null],
+  ["เมนูอาหารกลางวันวันนี้", null],
+  ["สถานะระบบ", "system_status"],
+  ["AI ช่วยอะไรได้บ้าง", "help"],
+];
+
+describe("ordered pattern matching", () => {
+  it.each(realisticPhraseCases)(
+    "matches realistic phrase %s exactly as %s",
+    (phrase, expectedIntent) => {
+      expect(matchQuestionIntent(`  ${phrase}  `)).toBe(expectedIntent);
+    },
+  );
+
+  it.each(canonicalMenuCases)("keeps menu text %s mapped to %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(`  ${phrase}  `)).toBe(expectedIntent);
+  });
+
+  it("keeps all 20 canonical menu mappings as explicit regressions", () => {
+    expect(canonicalMenuCases).toHaveLength(20);
+  });
+
+  it.each(shadowingRegressionCases)(
+    "does not let a general utility intent shadow %s",
+    (phrase, expectedIntent) => {
+      expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+    },
+  );
+
+  it.each([
+    ["งานค้างของทีมมีกี่ใบ", "team_most_open"],
+    ["ทีมมีงานอะไรบ้างวันนี้", "team_today"],
+    ["ใครไม่รับงานบ้าง", "team_unaccepted"],
+  ])("routes team-scoped phrase %s to %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it.each(negativePhraseCases)("does not hijack %s", (phrase) => {
+    expect(matchQuestionIntent(phrase)).toBeNull();
+  });
+});
+
+interface IntentAnswerCase {
+  intent: string;
+  actor: string;
+  question: string;
+  expectedParts: string[];
+  absentParts?: string[];
+}
+
+// Every expected number below is hand-counted from seedScenario, not queried in the test.
+const intentAnswerCases: IntentAnswerCase[] = [
+  {
+    intent: "my_tasks",
+    actor: "P-W1",
+    question: "งานของฉันมีอะไรบ้าง",
+    expectedParts: ["งานของพี่ 2 งาน", "T-W-OVER", "T-W-OPEN"],
+  },
+  {
+    intent: "my_open",
+    actor: "P-W1",
+    question: "งานที่ค้างอยู่ตอนนี้",
+    expectedParts: ["งานของพี่ที่ค้างอยู่ 2 งาน", "T-W-OVER", "T-W-OPEN"],
+  },
+  {
+    intent: "my_overdue",
+    actor: "P-W1",
+    question: "งานที่เกินกำหนดแล้ว",
+    expectedParts: ["งานของพี่ที่เกินกำหนด 1 งาน", "T-W-OVER"],
+    absentParts: ["T-A2-OVER"],
+  },
+  {
+    intent: "my_done_today",
+    actor: "P-W1",
+    question: "งานที่เสร็จวันนี้",
+    expectedParts: ["งานที่พี่ทำเสร็จวันนี้ 1 งาน", "T-W-DONE-TODAY"],
+    absentParts: ["T-W-DONE-WEEK"],
+  },
+  {
+    intent: "my_done_week",
+    actor: "P-W1",
+    question: "งานที่เสร็จสัปดาห์นี้",
+    expectedParts: [
+      "งานที่พี่ทำเสร็จสัปดาห์นี้ 2 งาน",
+      "T-W-DONE-TODAY",
+      "T-W-DONE-WEEK",
+    ],
+  },
+  {
+    intent: "my_next",
+    actor: "P-W1",
+    question: "งานถัดไปที่ต้องทำ",
+    expectedParts: ["งานของพี่ถัดไป", "T-W-OVER"],
+    absentParts: ["T-W-OPEN"],
+  },
+  {
+    intent: "my_latest_assigned",
+    actor: "P-W1",
+    question: "งานล่าสุดที่ได้รับมอบหมาย",
+    expectedParts: ["มอบหมายให้พี่ล่าสุด", "T-W-OPEN", "27 ส.ค. 2569 15:30 น."],
+    absentParts: ["2026-08-27T08:30:00.000Z"],
+  },
+  {
+    intent: "team_unaccepted",
+    actor: "P-MANAGER-A",
+    question: "ใครยังไม่รับงาน",
+    expectedParts: ["2 งาน", "P-W1", "P-A2", "30 นาที"],
+    absentParts: ["P-B1"],
+  },
+  {
+    intent: "team_most_open",
+    actor: "P-MANAGER-A",
+    question: "ใครมีงานค้างมากที่สุด",
+    expectedParts: ["P-A2", "3 งาน"],
+    absentParts: ["P-B1"],
+  },
+  {
+    intent: "team_overdue",
+    actor: "P-MANAGER-A",
+    question: "งานที่เกินกำหนดของทีม",
+    expectedParts: ["2 งาน", "T-W-OVER", "T-A2-OVER"],
+    absentParts: ["T-B-OVER", "P-B1"],
+  },
+  {
+    intent: "team_today",
+    actor: "P-MANAGER-A",
+    question: "สรุปงานวันนี้ทั้งทีม",
+    expectedParts: [
+      "งานใหม่ 7 งาน",
+      "งานเสร็จ 2 งาน",
+      "มีผู้รับแล้วแต่ยังค้างอยู่ทั้งหมด 5 งาน",
+      "ในจำนวนนี้ยังไม่มีผู้รับ 2 งาน",
+    ],
+  },
+  {
+    intent: "team_rejected",
+    actor: "P-MANAGER-A",
+    question: "ใครปฏิเสธงานบ้าง",
+    expectedParts: ["2 งาน", "T-W-REJECT", "T-A2-REJECT"],
+    absentParts: ["T-B-REJECT", "P-B1"],
+  },
+  {
+    intent: "team_unassigned",
+    actor: "P-MANAGER-A",
+    question: "งานที่ยังไม่มีคนรับ",
+    expectedParts: ["2 งาน", "T-UNASSIGNED", "T-UNASSIGNED-OPEN"],
+  },
+  {
+    intent: "stats_completed_month",
+    actor: "P-OWNER",
+    question: "งานเสร็จกี่ใบเดือนนี้",
+    expectedParts: ["5 งาน"],
+  },
+  {
+    intent: "stats_rejected_month",
+    actor: "P-OWNER",
+    question: "งานถูกปฏิเสธกี่ใบเดือนนี้",
+    expectedParts: ["3 งาน"],
+  },
+  {
+    intent: "stats_avg_cycle",
+    actor: "P-OWNER",
+    question: "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
+    expectedParts: ["5 งาน", "1.3 ชั่วโมง"],
+  },
+  {
+    intent: "stats_fastest_accept",
+    actor: "P-OWNER",
+    question: "ใครรับงานเร็วที่สุด",
+    expectedParts: ["P-A2", "13 นาที", "3 งาน"],
+  },
+  {
+    intent: "stats_new_today",
+    actor: "P-OWNER",
+    question: "วันนี้มีงานใหม่กี่ใบ",
+    expectedParts: ["10 งาน", "ในจำนวนนี้ยังไม่มีผู้รับ 2 งาน"],
+  },
+  {
+    intent: "help",
+    actor: "P-W1",
+    question: "AI ช่วยอะไรได้บ้าง",
+    expectedParts: [
+      "1. พิมพ์ว่า \"งานของฉันมีอะไรบ้าง\" ได้",
+      "20. พิมพ์ว่า \"สถานะระบบ\" ได้",
+    ],
+  },
+  {
+    intent: "system_status",
+    actor: "P-OWNER",
+    question: "สถานะระบบ",
+    expectedParts: [
+      "27 ส.ค. 2569 15:55 น.",
+      "คิวที่รอประมวลผลมี 1 งาน",
+      "27 ส.ค. 2569 15:50 น.",
+      "ผล ok",
+    ],
+    absentParts: ["2026-08-27T08:55:00.000Z", "2026-08-27T08:50:00.000Z"],
+  },
+];
+
+describe("answers from real SQLite queries", () => {
+  it.each(intentAnswerCases)(
+    "answers $intent from the hand-counted seed",
+    async ({ intent, actor, question, expectedParts, absentParts = [] }) => {
+      const answer = await askQuestion(database.asD1(), actor, question, now);
+
+      expect(answer).toMatchObject({ intent, matched: true, denied: false });
+      for (const part of expectedParts) expect(answer.text).toContain(part);
+      for (const part of absentParts) expect(answer.text).not.toContain(part);
+      expect(answer.text.endsWith("ค่ะ") || answer.text.endsWith("คะ")).toBe(true);
+      expect(answer.text.match(/ค่ะ|คะ/g) ?? []).toHaveLength(1);
+      if (intent === "help") expect(answer.text.split("\n")).toHaveLength(21);
+    },
+  );
+
+  it("keeps list bullets plain and uses one closing particle", async () => {
+    const answer = await askQuestion(
+      database.asD1(),
+      "P-W1",
+      "งานของฉันมีอะไรบ้าง",
+      now,
+    );
+    const bullets = answer.text.split("\n").filter((line) => line.startsWith("• "));
+
+    expect(bullets).toHaveLength(2);
+    for (const bullet of bullets) expect(bullet).not.toMatch(/ค่ะ|คะ/);
+    expect(answer.text.match(/ค่ะ|คะ/g) ?? []).toHaveLength(1);
+  });
+
+  it("reports a top-three ranking and discloses omitted tied workers", async () => {
+    const tieDatabase = new SQLiteD1();
+    try {
+      await insertPerson(tieDatabase, "P-TIE-M", "operations", "manager");
+      const counts = new Map([
+        ["P-TIE-A", 5],
+        ["P-TIE-B", 3],
+        ["P-TIE-C", 3],
+        ["P-TIE-D", 3],
+        ["P-TIE-E", 3],
+      ]);
+      for (const [assignee, count] of counts) {
+        await insertPerson(tieDatabase, assignee, "operations", "worker");
+        for (let index = 1; index <= count; index += 1) {
+          await insertTask(tieDatabase, {
+            ref: `T-${assignee}-${index}`,
+            title: `งานอันดับ ${index}`,
+            status: "assigned",
+            assignee,
+            createdAt: `2026-08-${String(20 + index).padStart(2, "0")}T00:00:00.000Z`,
+          });
+        }
+      }
+
+      const answer = await askQuestion(
+        tieDatabase.asD1(),
+        "P-TIE-M",
+        "ใครงานค้างเยอะ",
+        now,
+      );
+
+      expect(answer.text).toContain("1. P-TIE-A: 5 งาน");
+      expect(answer.text).toContain("2. P-TIE-B: 3 งาน");
+      expect(answer.text).toContain("3. P-TIE-C: 3 งาน");
+      expect(answer.text).toContain("แสดง 3 จาก 5 คน");
+      expect(answer.text).not.toContain("P-TIE-D");
+      expect(answer.text).not.toContain("P-TIE-E");
+    } finally {
+      tieDatabase.close();
+    }
+  });
+});
+
+describe("visibility and fail-closed behavior", () => {
+  const deniedQuestions = [
+    ["team_unaccepted", "ใครยังไม่รับงาน"],
+    ["team_most_open", "ใครมีงานค้างมากที่สุด"],
+    ["team_overdue", "งานที่เกินกำหนดของทีม"],
+    ["team_today", "สรุปงานวันนี้ทั้งทีม"],
+    ["team_rejected", "ใครปฏิเสธงานบ้าง"],
+    ["team_unassigned", "งานที่ยังไม่มีคนรับ"],
+    ["stats_fastest_accept", "ใครรับงานเร็วที่สุด"],
+  ];
+
+  it("keeps role-based visibility decisions out of the query engine", () => {
+    const source = readFileSync(
+      new URL("../src/queryEngine.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).not.toMatch(/\.role\b/);
+  });
+
+  it.each(deniedQuestions)(
+    "denies a worker asking %s without leaking another code",
+    async (intent, question) => {
+      const answer = await askQuestion(database.asD1(), "P-W1", question, now);
+
+      expect(answer).toMatchObject({ intent, matched: true, denied: true });
+      for (const code of ["P-A2", "P-B1", "P-MANAGER-A", "P-OWNER"]) {
+        expect(answer.text).not.toContain(code);
+      }
+    },
+  );
+
+  it.each([
+    ["ใครมีงานค้างมากที่สุด", "P-A2", "P-B1"],
+    ["งานที่เกินกำหนดของทีม", "T-A2-OVER", "T-B-OVER"],
+  ])(
+    "lets a manager see the same department but not another for %s",
+    async (question, visibleValue, hiddenValue) => {
+      const answer = await askQuestion(
+        database.asD1(),
+        "P-MANAGER-A",
+        question,
+        now,
+      );
+
+      expect(answer.text).toContain(visibleValue);
+      expect(answer.text).not.toContain(hiddenValue);
+    },
+  );
+
+  it("scopes the same monthly statistic to fewer rows for a worker than an owner", async () => {
+    const worker = await askQuestion(
+      database.asD1(),
+      "P-W1",
+      "งานเสร็จกี่ใบเดือนนี้",
+      now,
+    );
+    const owner = await askQuestion(
+      database.asD1(),
+      "P-OWNER",
+      "งานเสร็จกี่ใบเดือนนี้",
+      now,
+    );
+
+    expect(worker.text).toContain("2 งาน");
+    expect(owner.text).toContain("5 งาน");
+  });
+
+  it("keeps a worker's new-today count unchanged and hides unassigned work", async () => {
+    const answer = await askQuestion(
+      database.asD1(),
+      "P-W1",
+      "วันนี้มีงานใหม่กี่ใบ",
+      now,
+    );
+
+    expect(answer.text).toContain("2 งาน");
+    expect(answer.text).not.toContain("ยังไม่มีผู้รับ");
+    expect(answer.text).not.toContain("T-UNASSIGNED");
+  });
+
+  it("memoises canView once per distinct target for one question", async () => {
+    const base = database.asD1();
+    let personQueries = 0;
+    const countingDb = {
+      prepare(query: string): D1PreparedStatement {
+        if (/FROM person WHERE person_code = \?/i.test(query)) personQueries += 1;
+        return base.prepare(query);
+      },
+    } as unknown as D1Database;
+
+    const answer = await askQuestion(
+      countingDb,
+      "P-MANAGER-A",
+      "ใครมีงานค้างมากที่สุด",
+      now,
+    );
+
+    expect(answer.text).toContain("P-A2");
+    // One initial actor read, then actor+target reads for the three distinct assignees.
+    expect(personQueries).toBe(7);
+  });
+
+  it("returns no partial data when canView throws", async () => {
+    const base = database.asD1();
+    let personQueries = 0;
+    const failingVisibilityDb = {
+      prepare(query: string): D1PreparedStatement {
+        if (/FROM person WHERE person_code = \?/i.test(query)) {
+          personQueries += 1;
+          if (personQueries > 1) throw new Error("visibility lookup failed");
+        }
+        return base.prepare(query);
+      },
+    } as unknown as D1Database;
+
+    const answer = await askQuestion(
+      failingVisibilityDb,
+      "P-MANAGER-A",
+      "ใครมีงานค้างมากที่สุด",
+      now,
+    );
+
+    expect(answer.text).toContain("อ่านข้อมูลไม่ได้");
+    for (const code of ["P-W1", "P-A2", "P-B1"]) {
+      expect(answer.text).not.toContain(code);
+    }
+  });
+
+  it("returns no data and does not throw for an unknown actor on self and team intents", async () => {
+    const selfAnswer = await askQuestion(
+      database.asD1(),
+      "P-MISSING",
+      "งานของฉันมีอะไรบ้าง",
+      now,
+    );
+    const teamAnswer = await askQuestion(
+      database.asD1(),
+      "P-MISSING",
+      "ใครมีงานค้างมากที่สุด",
+      now,
+    );
+
+    expect(selfAnswer.text).toContain("ไม่พบข้อมูลผู้ใช้งาน");
+    expect(teamAnswer.text).toContain("ไม่พบข้อมูลผู้ใช้งาน");
+    expect(selfAnswer.text).not.toContain("T-");
+    expect(teamAnswer.text).not.toContain("P-A2");
+  });
+});
+
+describe("bad input and empty data", () => {
+  it("returns the specified unmatched answer for empty and garbage text", async () => {
+    for (const question of ["", "   ", "กุ้งทะเลสีรุ้ง"]) {
+      const answer = await askQuestion(database.asD1(), "P-W1", question, now);
+      expect(answer).toEqual({
+        intent: "unmatched",
+        text: "น้องกุ้งยังไม่เข้าใจคำถามนี้ ลองพิมพ์ว่า \"AI ช่วยอะไรได้บ้าง\" เพื่อดูสิ่งที่น้องกุ้งตอบได้นะคะ",
+        matched: false,
+        denied: false,
+      });
+    }
+  });
+
+  it("states several empty result sets plainly without fabricating a number", async () => {
+    const empty = new SQLiteD1();
+    try {
+      await insertPerson(empty, "P-EMPTY-W", "operations", "worker");
+      await insertPerson(empty, "P-EMPTY-O", "management", "owner");
+      const questions: Array<[string, string]> = [
+        ["P-EMPTY-W", "งานที่เกินกำหนดแล้ว"],
+        ["P-EMPTY-W", "งานที่เสร็จวันนี้"],
+        ["P-EMPTY-O", "งานที่ยังไม่มีคนรับ"],
+        ["P-EMPTY-W", "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน"],
+      ];
+      for (const [actor, question] of questions) {
+        const answer = await askQuestion(empty.asD1(), actor, question, now);
+        expect(answer.text).toContain("ไม่มี");
+        expect(answer.text).not.toMatch(/\d/);
+      }
+    } finally {
+      empty.close();
+    }
+  });
+
+  it("turns a D1 prepare failure into an actionable answer", async () => {
+    const broken = {
+      prepare(): never {
+        throw new Error("D1 unavailable");
+      },
+    } as unknown as D1Database;
+
+    await expect(
+      askQuestion(broken, "P-W1", "งานของฉันมีอะไรบ้าง", now),
+    ).resolves.toMatchObject({
+      intent: "my_tasks",
+      matched: true,
+      denied: false,
+      text: expect.stringContaining("กรุณาลองถามอีกครั้ง"),
+    });
+  });
+});
+
+async function seedScenario(db: SQLiteD1): Promise<void> {
+  await insertPerson(db, "P-OWNER", "management", "owner");
+  await insertPerson(db, "P-MANAGER-A", "operations", "manager");
+  await insertPerson(db, "P-W1", "operations", "worker");
+  await insertPerson(db, "P-A2", "operations", "worker");
+  await insertPerson(db, "P-B1", "finance", "worker");
+
+  const tasks: TaskSeed[] = [
+    {
+      ref: "T-W-OPEN",
+      title: "ตรวจเอกสาร",
+      status: "assigned",
+      assignee: "P-W1",
+      createdAt: "2026-08-27T08:00:00.000Z",
+      dueAt: "2026-08-27T12:00:00.000Z",
+    },
+    {
+      ref: "T-W-OVER",
+      title: "แก้ใบขน",
+      status: "blocked",
+      assignee: "P-W1",
+      createdAt: "2026-08-25T00:00:00.000Z",
+      dueAt: "2026-08-26T00:00:00.000Z",
+      acceptedAt: "2026-08-25T01:00:00.000Z",
+    },
+    {
+      ref: "T-W-DONE-TODAY",
+      title: "ส่งรายงาน",
+      status: "completed",
+      assignee: "P-W1",
+      createdAt: "2026-08-27T05:00:00.000Z",
+      acceptedAt: "2026-08-27T06:00:00.000Z",
+      completedAt: "2026-08-27T08:00:00.000Z",
+    },
+    {
+      ref: "T-W-DONE-WEEK",
+      title: "ตรวจสินค้า",
+      status: "completed",
+      assignee: "P-W1",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      acceptedAt: "2026-08-24T01:00:00.000Z",
+      completedAt: "2026-08-24T03:00:00.000Z",
+    },
+    {
+      ref: "T-W-REJECT",
+      title: "งานข้อมูลไม่ครบ",
+      status: "rejected",
+      assignee: "P-W1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+    },
+    {
+      ref: "T-A2-ASSIGNED",
+      title: "รับเอกสาร",
+      status: "assigned",
+      assignee: "P-A2",
+      createdAt: "2026-08-27T08:30:00.000Z",
+      dueAt: "2026-08-28T00:00:00.000Z",
+    },
+    {
+      ref: "T-A2-OPEN",
+      title: "ตรวจพิกัด",
+      status: "accepted",
+      assignee: "P-A2",
+      createdAt: "2026-08-26T20:00:00.000Z",
+      acceptedAt: "2026-08-26T20:10:00.000Z",
+      dueAt: "2026-08-28T00:00:00.000Z",
+    },
+    {
+      ref: "T-A2-OVER",
+      title: "ติดตามของ",
+      status: "in_progress",
+      assignee: "P-A2",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      acceptedAt: "2026-08-24T00:20:00.000Z",
+      dueAt: "2026-08-26T01:00:00.000Z",
+    },
+    {
+      ref: "T-A2-DONE",
+      title: "ปิดแฟ้ม",
+      status: "completed",
+      assignee: "P-A2",
+      createdAt: "2026-08-27T04:00:00.000Z",
+      acceptedAt: "2026-08-27T04:10:00.000Z",
+      completedAt: "2026-08-27T05:10:00.000Z",
+    },
+    {
+      ref: "T-A2-REJECT",
+      title: "งานผิดแผนก",
+      status: "rejected",
+      assignee: "P-A2",
+      createdAt: "2026-08-21T00:00:00.000Z",
+    },
+    {
+      ref: "T-B-OPEN",
+      title: "งานการเงิน",
+      status: "accepted",
+      assignee: "P-B1",
+      createdAt: "2026-08-27T04:00:00.000Z",
+      acceptedAt: "2026-08-27T04:30:00.000Z",
+    },
+    {
+      ref: "T-B-OVER",
+      title: "งานการเงินเกินกำหนด",
+      status: "in_progress",
+      assignee: "P-B1",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      acceptedAt: "2026-08-24T01:00:00.000Z",
+      dueAt: "2026-08-25T00:00:00.000Z",
+    },
+    {
+      ref: "T-B-DONE",
+      title: "จ่ายค่าธรรมเนียม",
+      status: "completed",
+      assignee: "P-B1",
+      createdAt: "2026-08-27T02:00:00.000Z",
+      acceptedAt: "2026-08-27T02:30:00.000Z",
+      completedAt: "2026-08-27T03:00:00.000Z",
+    },
+    {
+      ref: "T-B-REJECT",
+      title: "รายการซ้ำ",
+      status: "rejected",
+      assignee: "P-B1",
+      createdAt: "2026-08-22T00:00:00.000Z",
+    },
+    {
+      ref: "T-O-DONE",
+      title: "อนุมัติงาน",
+      status: "completed",
+      assignee: "P-OWNER",
+      createdAt: "2026-08-26T18:00:00.000Z",
+      acceptedAt: "2026-08-26T19:00:00.000Z",
+      completedAt: "2026-08-26T20:00:00.000Z",
+    },
+    {
+      ref: "T-UNASSIGNED",
+      title: "งานรอจัดคน",
+      status: "draft",
+      assignee: null,
+      createdAt: "2026-08-27T07:00:00.000Z",
+    },
+    {
+      ref: "T-UNASSIGNED-OPEN",
+      title: "งานเปิดที่รอจัดคน",
+      status: "assigned",
+      assignee: null,
+      createdAt: "2026-08-27T07:30:00.000Z",
+    },
+  ];
+  for (const task of tasks) await insertTask(db, task);
+
+  await insertEvent(db, "T-W-OPEN", "assigned", "2026-08-27T08:30:00.000Z");
+  await insertEvent(db, "T-A2-ASSIGNED", "assigned", "2026-08-27T08:30:00.000Z");
+  await insertEvent(db, "T-W-REJECT", "rejected", "2026-08-20T01:00:00.000Z");
+  await insertEvent(db, "T-A2-REJECT", "rejected", "2026-08-21T01:00:00.000Z");
+  await insertEvent(db, "T-B-REJECT", "rejected", "2026-08-22T01:00:00.000Z");
+
+  const inbox = db
+    .asD1()
+    .prepare(
+      `INSERT INTO inbox_event
+       (event_id, event_type, message_type, source_type, occurred_at, received_at,
+        payload_bytes, payload_sha256, status)
+       VALUES (?, 'message', 'text', 'group', ?, ?, ?, ?, 'done')`,
+    )
+    .bind(
+      "evt-status",
+      "2026-08-27T08:54:00.000Z",
+      "2026-08-27T08:55:00.000Z",
+      1,
+      "a".repeat(64),
+    );
+  await inbox.run();
+  await db
+    .asD1()
+    .prepare(
+      `INSERT INTO job_queue
+       (event_id, kind, status, next_run_at, idem_key, event_occurred_at)
+       VALUES (?, 'line_event', 'pending', ?, ?, ?)` ,
+    )
+    .bind(
+      "evt-status",
+      "2026-08-27T09:01:00.000Z",
+      "job-status",
+      "2026-08-27T08:54:00.000Z",
+    )
+    .run();
+  await db
+    .asD1()
+    .prepare(
+      `INSERT INTO ledger (action_type, outcome, occurred_at)
+       VALUES ('cron_tick', 'ok', ?)` ,
+    )
+    .bind("2026-08-27T08:50:00.000Z")
+    .run();
+}
+
+async function insertPerson(
+  db: SQLiteD1,
+  personCode: string,
+  department: string,
+  role: string,
+): Promise<void> {
+  await db
+    .asD1()
+    .prepare("INSERT INTO person (person_code, department, role) VALUES (?, ?, ?)")
+    .bind(personCode, department, role)
+    .run();
+}
+
+async function insertTask(db: SQLiteD1, task: TaskSeed): Promise<void> {
+  await db
+    .asD1()
+    .prepare(
+      `INSERT INTO task
+       (task_ref, title, status, assignee_person_code, created_at, updated_at,
+        due_at, accepted_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    )
+    .bind(
+      task.ref,
+      task.title,
+      task.status,
+      task.assignee,
+      task.createdAt,
+      task.createdAt,
+      task.dueAt ?? null,
+      task.acceptedAt ?? null,
+      task.completedAt ?? null,
+    )
+    .run();
+}
+
+async function insertEvent(
+  db: SQLiteD1,
+  taskRef: string,
+  newStatus: string,
+  occurredAt: string,
+): Promise<void> {
+  await db
+    .asD1()
+    .prepare(
+      `INSERT INTO task_event (task_ref, new_status, source, occurred_at)
+       VALUES (?, ?, 'system', ?)` ,
+    )
+    .bind(taskRef, newStatus, occurredAt)
+    .run();
+}
