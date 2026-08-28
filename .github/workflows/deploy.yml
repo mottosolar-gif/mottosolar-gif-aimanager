@@ -40,8 +40,14 @@ jobs:
 
   deploy:
     needs: test
-    # ปล่อยจริงเมื่อคนกดสั่งเองและพิมพ์ยืนยันว่า deploy เท่านั้น — push เฉย ๆ ไม่ปล่อย
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy == 'deploy'
+    # ปล่อยจริงเมื่อ: คนกดสั่งเอง + พิมพ์ยืนยันว่า deploy + สั่งจาก main เท่านั้น
+    # ★ เงื่อนไข github.ref เพิ่ม 2026-08-28 หลัง code-reviewer ทัก — workflow_dispatch
+    #   สั่งจาก branch ไหนก็ได้ ⇒ ถ้าไม่ล็อก branch ตัวแก้ที่ตั้งใจ "รัดกุมขึ้น" กลับเปิดทาง
+    #   ให้ migration + deploy ขึ้น production จาก branch ทดลองได้ ซึ่งของเดิม (push:main) กันอยู่แล้ว
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.deploy == 'deploy'
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     steps:
