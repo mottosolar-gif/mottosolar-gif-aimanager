@@ -72,8 +72,20 @@ export async function sendTextNotification(
       return { ok: false, reason: "endpoint_rejected", retryable: false };
     }
     return { ok: true, reason: "sent" };
-  } catch {
-    return { ok: false, reason: "network", retryable: true };
+  } catch (error) {
+    // "network" คำเดียวหยาบเกินไป — มันครอบทุก throw ในบล็อกนี้ ทั้ง DNS ล้ม · ต่อไม่ติด ·
+    // ใบรับรองไม่ผ่าน · โดน redirect (เราตั้ง redirect:'error') · และ **URL ผิดรูป**
+    // ซึ่งแต่ละอันต้องไล่คนละทางโดยสิ้นเชิง ⇒ ไล่บั๊กจากคำว่า "network" อย่างเดียวไม่ได้เลย
+    // (เจอกับตัว 2026-08-28: สรุปยิงไม่ออกและใช้เวลาไล่นานเพราะเหตุผลบอกแค่ว่า network)
+    //
+    // เอาเฉพาะ "ชนิดของความผิดพลาด" ไม่เอาข้อความเต็ม — ข้อความอาจมี URL/ค่าที่ไม่ควรลง ledger
+    // และขัดฟันหลอเหลือแต่ตัวอักษรปลอดภัย + ตัวพิมพ์เล็ก เพราะ safeOutcomeReason() รับแค่ [a-z0-9_]
+    // (พลาดรอบแรก: ส่ง network_TypeError ไป แล้วมันถูกปัดเป็น "unknown" — ยามทำถูก แต่ข้อมูลหาย)
+    const kind =
+      error instanceof Error && typeof error.name === "string" && error.name !== ""
+        ? error.name.replace(/[^A-Za-z0-9_]/g, "").toLowerCase().slice(0, 20)
+        : "unknown";
+    return { ok: false, reason: `network_${kind}`, retryable: true };
   } finally {
     clearTimeout(timeout);
   }
