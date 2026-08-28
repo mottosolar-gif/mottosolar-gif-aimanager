@@ -2,7 +2,7 @@ import type { Env } from "./types.ts";
 
 export type OutboundResult =
   | { ok: true; reason: "sent" }
-  | { ok: false; reason: string; retryable: boolean };
+  | { ok: false; reason: string; retryable: boolean; skipped?: boolean };
 
 export type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -43,6 +43,12 @@ export async function sendTextNotification(
       redirect: "error",
       signal: controller.signal,
     });
+    // 412 = ฝั่งรับตั้งใจไม่ส่ง เพราะวันนี้เป็นวันหยุดของผู้รับ (ปฏิทินอยู่ db_customs ฝั่งโน้น)
+    // ไม่ใช่ความล้มเหลว และลองใหม่ในรอบเดิมก็ไม่เปลี่ยนอะไร ⇒ ต้องแยกออกจาก dead ให้ ledger จดตรง
+    // (ก่อนฝั่งรับใส่ด่านนี้ 412 ไม่เคยเกิด ⇒ เพิ่มตรงนี้ไม่กระทบพฤติกรรมเดิมแม้แต่กรณีเดียว)
+    if (response.status === 412) {
+      return { ok: false, reason: "skipped_holiday", retryable: false, skipped: true };
+    }
     if (!response.ok) {
       return {
         ok: false,

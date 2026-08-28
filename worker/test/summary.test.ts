@@ -261,6 +261,37 @@ describe("scheduled summary delivery", () => {
     }
   });
 
+it("บันทึกวันหยุดเป็น skipped_holiday แล้วไม่ยิงซ้ำอีกในรอบเดียวกัน", async () => {
+    const database = summaryDatabase();
+    seedOpenTask(database);
+    // ฝั่งรับตอบ 412 = "วันนี้ผู้รับหยุด ไม่ส่งให้" — ไม่ใช่ความล้มเหลว
+    const fetcher = vi.fn(async () => new Response("off", { status: 412 }));
+    try {
+      const first = await processScheduledSummaries(env(database), morning.scheduledAt, fetcher);
+      expect(first.skippedHoliday).toBe(1);
+      expect(first.dead).toBe(0);
+      expect(first.retried).toBe(0);
+      // ข้ามเพราะวันหยุด = งานรอบนี้จบแล้วจริง ๆ ⇒ ห้ามหน่วง checkpoint ไว้ตามเก็บ
+      expect(first.checkpointSafe).toBe(true);
+
+      // รอบถัดไปในนาทีเดียวกันต้องไม่ยิงซ้ำ — ถ้าไม่เป็น terminal จะโดนยิงทุกนาทีทั้งวัน
+      const second = await processScheduledSummaries(env(database), morning.scheduledAt, fetcher);
+      expect(second.skippedHoliday).toBe(0);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      const ledger = await database
+        .asD1()
+        .prepare(
+          `SELECT outcome FROM ledger
+           WHERE action_type = 'scheduled_summary' AND reference_id = '28/08/2569:morning'`,
+        )
+        .all<{ outcome: string }>();
+      expect(ledger.results).toEqual([{ outcome: "skipped_holiday" }]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends to every linked person and no unlinked person", async () => {
     const database = summaryDatabase([
       { code: "P-EKAPUN", role: "owner" },

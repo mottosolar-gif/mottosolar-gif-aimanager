@@ -39,6 +39,7 @@ export interface SummaryRunResult {
   dead: number;
   missed: number;
   configMissing: number;
+  skippedHoliday: number;
   checkpointSafe: boolean;
 }
 
@@ -174,6 +175,7 @@ export async function processScheduledSummaries(
     dead: 0,
     missed: 0,
     configMissing: 0,
+    skippedHoliday: 0,
     checkpointSafe: true,
   };
   const latestCron = await readLatestCronBefore(env.DB, now);
@@ -248,6 +250,11 @@ export async function processScheduledSummaries(
         if (outbound.ok) {
           await finishSummaryDelivery(env.DB, claim.ledgerId, "sent");
           result.sent += 1;
+        } else if (outbound.skipped) {
+          // ฝั่งรับตั้งใจไม่ส่งเพราะวันหยุดของผู้รับ — ปิดรอบนี้ให้จบ ไม่ใช่ปล่อยค้างหรือจดว่าตาย
+          // checkpoint เดินหน้าได้ตามปกติ เพราะงานรอบนี้ "จบแล้ว" จริง ๆ ไม่มีอะไรค้างให้ตามเก็บ
+          await finishSummaryDelivery(env.DB, claim.ledgerId, "skipped_holiday");
+          result.skippedHoliday += 1;
         } else {
           const dead = await recordDeliveryFailure(
             env.DB,

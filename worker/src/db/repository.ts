@@ -15,10 +15,13 @@ export interface SummaryDeliveryClaim {
 export type SummaryTerminalOutcome =
   | "sent"
   | "empty"
-  | "missed";
+  | "missed"
+  // ฝั่งรับตั้งใจไม่ส่งเพราะวันนี้เป็นวันหยุดของผู้รับ (ปฏิทินอยู่ db_customs ฝั่ง LIVE)
+  // เป็น terminal จริง ๆ: รอบนี้จบแล้ว ไม่ใช่ค้างรอ retry และไม่ใช่ dead ที่แปลว่าพัง
+  | "skipped_holiday";
 
 const summaryActionType = "scheduled_summary";
-const summaryTerminalOutcomes = ["sent", "empty", "missed"] as const;
+const summaryTerminalOutcomes = ["sent", "empty", "missed", "skipped_holiday"] as const;
 
 const insertInboxSql = `
   INSERT OR IGNORE INTO inbox_event (

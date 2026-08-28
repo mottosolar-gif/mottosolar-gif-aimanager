@@ -84,6 +84,13 @@ describe("text notification outbound adapter", () => {
       ).resolves.toEqual({ ok: false, reason: `http_${status}`, retryable: false });
     }
 
+    // 412 = ฝั่งรับตั้งใจไม่ส่งเพราะวันหยุดของผู้รับ ไม่ใช่ความล้มเหลว
+    // ต้องแยกออกจาก 4xx ตัวอื่น ไม่งั้น ledger จดว่า "ตาย" ทั้งที่ระบบทำถูกทุกอย่าง
+    const holiday = vi.fn(async () => new Response("off", { status: 412 }));
+    await expect(
+      sendTextNotification(env(), "P-ASSIST", "x", "idem", holiday),
+    ).resolves.toEqual({ ok: false, reason: "skipped_holiday", retryable: false, skipped: true });
+
     const malformed = vi.fn(async () => new Response("not-json", { status: 200 }));
     await expect(
       sendTextNotification(env(), "P-ASSIST", "x", "idem", malformed),
