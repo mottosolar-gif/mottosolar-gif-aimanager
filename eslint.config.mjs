@@ -15,7 +15,10 @@ export default tseslint.config(
       "@typescript-eslint": tseslint.plugin,
     },
     rules: {
+      // Together these reject both discarded promises and promises misused as
+      // boolean values, including `if (canView(...))` without `await`.
       "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
     },
   },
 );

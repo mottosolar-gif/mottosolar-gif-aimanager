@@ -23,8 +23,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # ★ 2026-08-28: เพิ่ม lint เข้า CI — เดิมไม่มี ทั้งที่ commit d79ccee ตั้งกฎ
-      #   @typescript-eslint/no-floating-promises ไว้กัน canView() ลืม await โดยเฉพาะ
+      # ★ 2026-08-28: no-floating-promises กัน promise ที่ถูกทิ้ง และ
+      #   no-misused-promises กัน canView() ที่ลืม await แล้วถูกใช้เป็น boolean
       #   (ลืมครั้งเดียว = สิทธิ์การมองเห็นรั่วทั้งระบบ) ⇒ กฎที่ไม่มีตัวบังคับใช้ = ไม่มีกฎ
       - run: npm run lint
       - run: npm run db:migration:check

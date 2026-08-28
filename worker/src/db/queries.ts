@@ -37,6 +37,8 @@ const nonTerminalStatuses =
   "'draft','assigned','accepted','en_route','arrived','in_progress','blocked'";
 const openStatuses =
   "'assigned','accepted','en_route','arrived','in_progress','blocked'";
+export const candidateRowLimit = 500;
+const candidateFetchLimit = candidateRowLimit + 1;
 
 async function all<T>(
   db: D1Database,
@@ -171,7 +173,8 @@ export function queryTeamUnacceptedTasks(
      GROUP BY t.task_ref, t.title, t.status, t.assignee_person_code,
               t.created_at, t.scheduled_at, t.due_at,
               t.accepted_at, t.completed_at
-     ORDER BY assigned_at, t.task_ref`,
+     ORDER BY assigned_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -182,7 +185,8 @@ export function queryTeamOpenCandidates(db: D1Database): Promise<TaskQueryRow[]>
      FROM task t
      WHERE t.status IN (${openStatuses})
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.created_at, t.task_ref`,
+     ORDER BY t.assignee_person_code, t.created_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -197,7 +201,8 @@ export function queryTeamOverdueCandidates(
      WHERE t.due_at < ?
        AND t.status NOT IN ('completed','cancelled','rejected')
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.due_at, t.task_ref`,
+     ORDER BY t.due_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     now,
   );
 }
@@ -216,7 +221,8 @@ export function queryTeamTodayCandidates(
          OR (t.completed_at >= ? AND t.completed_at < ?)
          OR t.status IN (${openStatuses})
        )
-     ORDER BY t.created_at, t.task_ref`,
+     ORDER BY t.created_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     startUtc,
     endUtc,
     startUtc,
@@ -233,7 +239,8 @@ export function queryTeamRejectedCandidates(
      FROM task t
      WHERE t.status = 'rejected'
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref`,
+     ORDER BY t.assignee_person_code, t.updated_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -244,7 +251,8 @@ export function queryTeamUnassignedTasks(db: D1Database): Promise<TaskQueryRow[]
      FROM task t
      WHERE t.assignee_person_code IS NULL
        AND t.status IN (${nonTerminalStatuses})
-     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref`,
+     ORDER BY t.due_at IS NULL, t.due_at, t.created_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -261,7 +269,8 @@ export function queryCompletedMonthCandidates(
        AND t.completed_at >= ?
        AND t.completed_at < ?
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.completed_at, t.task_ref`,
+     ORDER BY t.completed_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     startUtc,
     endUtc,
   );
@@ -285,7 +294,8 @@ export function queryRejectedMonthCandidates(
            AND te.occurred_at >= ?
            AND te.occurred_at < ?
        )
-     ORDER BY t.task_ref`,
+     ORDER BY t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     startUtc,
     endUtc,
   );
@@ -306,7 +316,8 @@ export function queryCycleTimeCandidates(
        AND t.accepted_at IS NOT NULL
        AND t.completed_at >= t.accepted_at
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.completed_at, t.task_ref`,
+     ORDER BY t.completed_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
     startUtc,
     endUtc,
   );
@@ -320,7 +331,8 @@ export function queryAcceptTimeCandidates(db: D1Database): Promise<TaskQueryRow[
      WHERE t.accepted_at IS NOT NULL
        AND t.accepted_at >= t.created_at
        AND t.assignee_person_code IS NOT NULL
-     ORDER BY t.assignee_person_code, t.accepted_at, t.task_ref`,
+     ORDER BY t.assignee_person_code, t.accepted_at, t.task_ref
+     LIMIT ${candidateFetchLimit}`,
   );
 }
 
@@ -335,7 +347,8 @@ export function queryNewTodayCandidates(
       FROM task t
       WHERE t.created_at >= ?
         AND t.created_at < ?
-      ORDER BY t.created_at, t.task_ref`,
+       ORDER BY t.created_at, t.task_ref
+       LIMIT ${candidateFetchLimit}`,
     startUtc,
     endUtc,
   );

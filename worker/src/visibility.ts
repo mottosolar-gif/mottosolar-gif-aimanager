@@ -10,7 +10,36 @@ interface PersonDatabaseRow {
   role: string;
 }
 
-export async function readPerson(
+export type VisibilityReadMemo = object;
+
+const personReadsByMemo = new WeakMap<
+  VisibilityReadMemo,
+  Map<string, Promise<PersonRow | null>>
+>();
+
+export function createVisibilityReadMemo(): VisibilityReadMemo {
+  const memo = {};
+  personReadsByMemo.set(memo, new Map());
+  return memo;
+}
+
+export function readPerson(
+  db: D1Database,
+  personCode: string,
+  memo?: VisibilityReadMemo,
+): Promise<PersonRow | null> {
+  if (!memo) return queryPerson(db, personCode);
+  const reads = personReadsByMemo.get(memo);
+  if (!reads) return Promise.reject(new Error("Invalid visibility read memo"));
+  const cached = reads.get(personCode);
+  if (cached) return cached;
+  const read = queryPerson(db, personCode);
+  // Retain rejected reads too: a transient lookup failure must fail the whole answer.
+  reads.set(personCode, read);
+  return read;
+}
+
+async function queryPerson(
   db: D1Database,
   personCode: string,
 ): Promise<PersonRow | null> {
@@ -34,8 +63,9 @@ export async function canView(
   db: D1Database,
   actorPersonCode: string,
   targetPersonCode: string,
+  memo?: VisibilityReadMemo,
 ): Promise<boolean> {
-  const actor = await readPerson(db, actorPersonCode);
+  const actor = await readPerson(db, actorPersonCode, memo);
   // Unknown actors are denied, including when both input codes are identical.
   if (!actor) return false;
 
@@ -43,7 +73,7 @@ export async function canView(
   if (actor.role === "owner") return true;
 
   if (actor.role === "manager") {
-    const target = await readPerson(db, targetPersonCode);
+    const target = await readPerson(db, targetPersonCode, memo);
     // A manager cannot inherit visibility for a target absent from the database.
     if (!target) return false;
     // A missing department is a data-quality gap, never a basis for cross-visibility.

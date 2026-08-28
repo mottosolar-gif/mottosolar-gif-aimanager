@@ -1,92 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { canView, readPerson } from "../src/visibility.ts";
+import { SQLiteD1 } from "./helpers/sqliteD1.ts";
 
-interface StoredPerson {
-  person_code: string;
-  department: string | null;
-  role: string;
-}
+let database: SQLiteD1;
 
-class MemoryStatement {
-  values: unknown[] = [];
+beforeEach(async () => {
+  database = new SQLiteD1();
+  await seedPerson("P-OWNER", "management", "owner");
+  await seedPerson("P-MANAGER-A", "operations", "manager");
+  await seedPerson("P-WORKER-A1", "operations", "worker");
+  await seedPerson("P-WORKER-A2", "operations", "worker");
+  await seedPerson("P-WORKER-B", "finance", "worker");
+  await seedPerson("P-GUEST", "operations", "guest");
+  await seedPerson("P-MANAGER-EMPTY", "", "manager");
+  await seedPerson("P-WORKER-EMPTY", "", "worker");
+});
 
-  constructor(
-    readonly database: MemoryD1,
-    readonly query: string,
-  ) {}
+afterEach(() => {
+  database.close();
+});
 
-  bind(...values: unknown[]): D1PreparedStatement {
-    this.values = values;
-    return this as unknown as D1PreparedStatement;
-  }
-
-  async all<T>(): Promise<D1Result<T>> {
-    return this.database.execute(this) as D1Result<T>;
-  }
-}
-
-class MemoryD1 {
-  people: StoredPerson[] = [];
-
-  seedPerson(
-    personCode: string,
-    department: string | null,
-    role: string,
-  ): void {
-    this.people.push({
-      person_code: personCode,
-      department,
-      role,
-    });
-  }
-
-  prepare(query: string): D1PreparedStatement {
-    return new MemoryStatement(this, query) as unknown as D1PreparedStatement;
-  }
-
-  execute(statement: MemoryStatement): D1Result {
-    if (
-      /SELECT person_code, department, role FROM person WHERE person_code = \?/i.test(
-        statement.query,
-      )
-    ) {
-      const person = this.people.find(
-        (row) => row.person_code === String(statement.values[0]),
-      );
-      return result(person ? [{ ...person }] : []);
-    }
-    throw new Error("Visibility test D1 received an unsupported statement");
-  }
-}
-
-function result(rows: unknown[]): D1Result {
-  return {
-    success: true,
-    results: rows,
-    meta: { changes: 0 },
-  } as unknown as D1Result;
-}
-
-function seededDatabase(): MemoryD1 {
-  const database = new MemoryD1();
-  database.seedPerson("P-OWNER", "management", "owner");
-  database.seedPerson("P-MANAGER-A", "operations", "manager");
-  database.seedPerson("P-WORKER-A1", "operations", "worker");
-  database.seedPerson("P-WORKER-A2", "operations", "worker");
-  database.seedPerson("P-WORKER-B", "finance", "worker");
-  database.seedPerson("P-GUEST", "operations", "guest");
-  database.seedPerson("P-MANAGER-EMPTY", "", "manager");
-  database.seedPerson("P-WORKER-EMPTY", "", "worker");
-  return database;
-}
-
-describe("visibility", () => {
-  it("maps a stored person to camelCase", async () => {
-    const database = seededDatabase();
-
-    await expect(
-      readPerson(database as unknown as D1Database, "P-MANAGER-A"),
-    ).resolves.toEqual({
+describe("visibility on migrated SQLite schema", () => {
+  it("maps a stored person to camelCase through the real readPerson SQL", async () => {
+    await expect(readPerson(database.asD1(), "P-MANAGER-A")).resolves.toEqual({
       personCode: "P-MANAGER-A",
       department: "operations",
       role: "manager",
@@ -94,112 +30,76 @@ describe("visibility", () => {
   });
 
   it("allows an owner to view a person in another department", async () => {
-    const database = seededDatabase();
-
-    await expect(
-      canView(database as unknown as D1Database, "P-OWNER", "P-WORKER-B"),
-    ).resolves.toBe(true);
+    await expect(canView(database.asD1(), "P-OWNER", "P-WORKER-B")).resolves.toBe(true);
   });
 
   it("allows a manager to view a person in the same department", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-MANAGER-A",
-        "P-WORKER-A1",
-      ),
+      canView(database.asD1(), "P-MANAGER-A", "P-WORKER-A1"),
     ).resolves.toBe(true);
   });
 
   it("denies a manager viewing a person in another department", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-MANAGER-A",
-        "P-WORKER-B",
-      ),
+      canView(database.asD1(), "P-MANAGER-A", "P-WORKER-B"),
     ).resolves.toBe(false);
   });
 
   it("denies visibility when both manager and target departments are empty", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-MANAGER-EMPTY",
-        "P-WORKER-EMPTY",
-      ),
+      canView(database.asD1(), "P-MANAGER-EMPTY", "P-WORKER-EMPTY"),
     ).resolves.toBe(false);
   });
 
-  it("denies visibility when both manager and target departments are null", async () => {
-    const database = seededDatabase();
-    database.seedPerson("P-MANAGER-NULL", null, "manager");
-    database.seedPerson("P-WORKER-NULL", null, "worker");
-
+  it("documents that null departments are unreachable through the real schema", async () => {
+    // The falsy guard in canView remains defence in depth, but TEXT NOT NULL is
+    // the live boundary: a null department cannot be seeded honestly here.
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-MANAGER-NULL",
-        "P-WORKER-NULL",
-      ),
-    ).resolves.toBe(false);
+      database
+        .asD1()
+        .prepare("INSERT INTO person (person_code, department, role) VALUES (?, ?, ?)")
+        .bind("P-MANAGER-NULL", null, "manager")
+        .run(),
+    ).rejects.toThrow();
+    await expect(readPerson(database.asD1(), "P-MANAGER-NULL")).resolves.toBeNull();
   });
 
   it("allows a worker to view themself", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-WORKER-A1",
-        "P-WORKER-A1",
-      ),
+      canView(database.asD1(), "P-WORKER-A1", "P-WORKER-A1"),
     ).resolves.toBe(true);
   });
 
   it("denies a worker viewing another person in the same department", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-WORKER-A1",
-        "P-WORKER-A2",
-      ),
+      canView(database.asD1(), "P-WORKER-A1", "P-WORKER-A2"),
     ).resolves.toBe(false);
   });
 
   it("denies an actor absent from the database even when both codes match", async () => {
-    const database = seededDatabase();
-
-    await expect(
-      canView(database as unknown as D1Database, "P-MISSING", "P-MISSING"),
-    ).resolves.toBe(false);
+    await expect(canView(database.asD1(), "P-MISSING", "P-MISSING")).resolves.toBe(
+      false,
+    );
   });
 
   it("denies a manager when the target is absent from the database", async () => {
-    const database = seededDatabase();
-
     await expect(
-      canView(
-        database as unknown as D1Database,
-        "P-MANAGER-A",
-        "P-MISSING",
-      ),
+      canView(database.asD1(), "P-MANAGER-A", "P-MISSING"),
     ).resolves.toBe(false);
   });
 
   it("treats an unknown role like a worker", async () => {
-    const database = seededDatabase();
-    const db = database as unknown as D1Database;
-
-    await expect(canView(db, "P-GUEST", "P-GUEST")).resolves.toBe(true);
-    await expect(canView(db, "P-GUEST", "P-WORKER-A1")).resolves.toBe(false);
+    await expect(canView(database.asD1(), "P-GUEST", "P-GUEST")).resolves.toBe(true);
+    await expect(canView(database.asD1(), "P-GUEST", "P-WORKER-A1")).resolves.toBe(
+      false,
+    );
   });
 });
+
+async function seedPerson(personCode: string, department: string, role: string): Promise<void> {
+  await database
+    .asD1()
+    .prepare("INSERT INTO person (person_code, department, role) VALUES (?, ?, ?)")
+    .bind(personCode, department, role)
+    .run();
+}

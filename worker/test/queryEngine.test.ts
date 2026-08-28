@@ -209,8 +209,20 @@ describe("ordered pattern matching", () => {
   it.each([
     ["งานค้างของทีมมีกี่ใบ", "team_most_open"],
     ["ทีมมีงานอะไรบ้างวันนี้", "team_today"],
+    ["สรุปงานวันนี้ทั้งทีม", "team_today"],
     ["ใครไม่รับงานบ้าง", "team_unaccepted"],
   ])("routes team-scoped phrase %s to %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it.each([
+    ["ขอสรุปงานวันนี้ของฉัน", null],
+    ["ขอสรุปงานวันนี้ของผม", null],
+    ["ขอสรุปงานวันนี้ของหนู", null],
+    ["ฉันขอสรุปงานวันนี้", null],
+    ["ผมขอสรุปงานวันนี้", null],
+    ["สรุปงานที่เสร็จวันนี้", "my_done_today"],
+  ])("never routes self-scoped phrase %s to a team intent", (phrase, expectedIntent) => {
     expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
   });
 
@@ -305,10 +317,10 @@ const intentAnswerCases: IntentAnswerCase[] = [
     actor: "P-MANAGER-A",
     question: "สรุปงานวันนี้ทั้งทีม",
     expectedParts: [
-      "งานใหม่ 7 งาน",
-      "งานเสร็จ 2 งาน",
-      "มีผู้รับแล้วแต่ยังค้างอยู่ทั้งหมด 5 งาน",
-      "ในจำนวนนี้ยังไม่มีผู้รับ 2 งาน",
+      "งานใหม่วันนี้ 7 งาน",
+      "งานเสร็จวันนี้ 2 งาน",
+      "มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ 5 งาน",
+      "ยังไม่มีผู้รับและยังเปิดอยู่ตอนนี้ 1 งาน",
     ],
   },
   {
@@ -447,6 +459,93 @@ describe("answers from real SQLite queries", () => {
       tieDatabase.close();
     }
   });
+
+  it("labels a month-old unassigned open task separately from today's figures", async () => {
+    const scoped = new SQLiteD1();
+    try {
+      await insertPerson(scoped, "P-SCOPE-OWNER", "management", "owner");
+      await insertTask(scoped, {
+        ref: "T-UNASSIGNED-MONTH-OLD",
+        title: "งานค้างจากเดือนก่อน",
+        status: "assigned",
+        assignee: null,
+        createdAt: "2026-07-01T00:00:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        scoped.asD1(),
+        "P-SCOPE-OWNER",
+        "สรุปงานวันนี้ทั้งทีม",
+        now,
+      );
+
+      expect(answer.text).toContain("งานใหม่วันนี้ 0 งาน");
+      expect(answer.text).toContain("งานเสร็จวันนี้ 0 งาน");
+      expect(answer.text).toContain("มีผู้รับแล้วและยังเปิดอยู่ตอนนี้ 0 งาน");
+      expect(answer.text).toContain("ยังไม่มีผู้รับและยังเปิดอยู่ตอนนี้ 1 งาน");
+      expect(answer.text).not.toContain("ในจำนวนนี้");
+    } finally {
+      scoped.close();
+    }
+  });
+
+  it("omits the wait duration when an assigned timestamp cannot be parsed", async () => {
+    const invalidTime = new SQLiteD1();
+    try {
+      await insertPerson(invalidTime, "P-TIME-M", "operations", "manager");
+      await insertPerson(invalidTime, "P-TIME-W", "operations", "worker");
+      await insertTask(invalidTime, {
+        ref: "T-INVALID-ASSIGNED-TIME",
+        title: "งานเวลาเสีย",
+        status: "assigned",
+        assignee: "P-TIME-W",
+        createdAt: "not-a-timestamp",
+      });
+
+      const answer = await askQuestion(
+        invalidTime.asD1(),
+        "P-TIME-M",
+        "ใครยังไม่รับงาน",
+        now,
+      );
+
+      expect(answer.text).toContain("P-TIME-W: T-INVALID-ASSIGNED-TIME");
+      expect(answer.text).not.toContain("รอรับมา");
+      expect(answer.text).not.toContain("NaN");
+    } finally {
+      invalidTime.close();
+    }
+  });
+
+  it("caps candidate work and discloses the 500-row scope", async () => {
+    const crowded = new SQLiteD1();
+    try {
+      await insertPerson(crowded, "P-LIMIT-OWNER", "management", "owner");
+      await insertPerson(crowded, "P-LIMIT-W", "operations", "worker");
+      for (let index = 1; index <= 501; index += 1) {
+        await insertTask(crowded, {
+          ref: `T-LIMIT-${String(index).padStart(4, "0")}`,
+          title: `งานลำดับ ${index}`,
+          status: "assigned",
+          assignee: "P-LIMIT-W",
+          createdAt: `2026-08-20T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        });
+      }
+
+      const answer = await askQuestion(
+        crowded.asD1(),
+        "P-LIMIT-OWNER",
+        "ใครมีงานค้างมากที่สุด",
+        now,
+      );
+
+      expect(answer.text).toContain("P-LIMIT-W มีงานค้างมากที่สุด 500 งาน");
+      expect(answer.text).toContain("ตัวเลขนี้คำนวณจาก 500 งานแรก");
+      expect(answer.text).not.toContain("501 งาน");
+    } finally {
+      crowded.close();
+    }
+  });
 });
 
 describe("visibility and fail-closed behavior", () => {
@@ -466,7 +565,19 @@ describe("visibility and fail-closed behavior", () => {
       "utf8",
     );
 
-    expect(source).not.toMatch(/\.role\b/);
+    // Stop direct property, bracket, and destructuring access from moving role
+    // decisions out of visibility.ts and back into the query engine.
+    const forbiddenRoleLogic =
+      /(?:\.\s*role\b|\[\s*["']role["']\s*\]|\{[^}]*\brole\b[^}]*\}\s*=)/;
+    for (const bypass of [
+      "actor.role",
+      'actor["role"]',
+      "const { role } = actor",
+      "const {\n  role: actorRole\n} = actor",
+    ]) {
+      expect(bypass).toMatch(forbiddenRoleLogic);
+    }
+    expect(source).not.toMatch(forbiddenRoleLogic);
   });
 
   it.each(deniedQuestions)(
@@ -548,8 +659,8 @@ describe("visibility and fail-closed behavior", () => {
     );
 
     expect(answer.text).toContain("P-A2");
-    // One initial actor read, then actor+target reads for the three distinct assignees.
-    expect(personQueries).toBe(7);
+    // One actor read for the answer, then one target read per distinct assignee.
+    expect(personQueries).toBe(4);
   });
 
   it("returns no partial data when canView throws", async () => {
