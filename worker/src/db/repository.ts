@@ -106,6 +106,12 @@ export async function enqueueEvents(
 // deadJobs   = งานที่ยอมแพ้ถาวรแล้ว (สะสม ไม่ลดเอง) — ต้องมีคนตัดสินว่าจะตามเก็บหรือปล่อย
 // strandedEvents = แถวใน inbox_event ที่ยัง pending เกิน 15 นาที ทั้งที่ cron เดินทุกนาที
 //   15 นาทีเผื่อ retry ปกติ (30+60+120+240 วิ ≈ 8 นาที) ไว้แล้ว ⇒ เกินนี้คือค้างจริง ไม่ใช่กำลังรอ
+//
+// received_at is Date.toISOString() ('2026-09-04T05:54:42.913Z'). SQLite
+// datetime('now') is '2026-09-04 06:39:42' (space, no T/Z). String compare
+// at index 10 is 'T' > space, so `received_at < datetime(...)` is never true
+// and this gauge stays 0 — the same false-confidence class as D-P0-15.
+// datetime() on both sides parses before comparing.
 export async function readHealth(db: D1Database): Promise<{
   queueDepth: number;
   lastIngestAt: string | null;
@@ -118,7 +124,8 @@ export async function readHealth(db: D1Database): Promise<{
     db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE status = 'dead'"),
     db.prepare(
       `SELECT COUNT(*) AS n FROM inbox_event
-       WHERE status = 'pending' AND received_at < datetime('now', '-15 minutes')`,
+       WHERE status = 'pending'
+         AND datetime(received_at) < datetime('now', '-15 minutes')`,
     ),
   ]);
   const queueRow = queue.results[0] as { depth?: number | string } | undefined;
