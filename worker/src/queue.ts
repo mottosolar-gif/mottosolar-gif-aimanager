@@ -34,13 +34,8 @@ export async function processQueue(
   recordCheckpoint = true,
 ): Promise<ProcessQueueResult> {
   const result: ProcessQueueResult = { processed: 0, retried: 0, dead: 0 };
-  let jobs: PendingJob[] = [];
-  try {
-    jobs = await readPendingJobs(db, now, MAX_JOBS_PER_TICK);
-  } catch {
-    // D1 ไม่ตอบสนองตอนอ่านคิว — ปล่อยให้รอบนี้ไม่มีงาน แล้วยังคงบันทึก cron_tick ด้านล่างเสมอ
-    jobs = [];
-  }
+  // อ่านคิวพังต้องโยนออกไป — ห้ามบันทึก cron_tick ว่า ok ทั้งที่ไม่ได้ไล่งาน
+  const jobs = await readPendingJobs(db, now, MAX_JOBS_PER_TICK);
 
   for (const job of jobs) {
     try {

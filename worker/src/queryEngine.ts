@@ -390,27 +390,22 @@ export async function askQuestion(
     };
   }
 
-  try {
-    const visibilityReads = createVisibilityReadMemo();
-    const actor = await readPerson(db, actorPersonCode, visibilityReads);
-    if (!actor) {
-      return matchedAnswer(
-        intent,
-        "น้องกุ้งไม่พบข้อมูลผู้ใช้งานของพี่ กรุณาเชื่อมบัญชีกับรหัสพนักงานก่อน แล้วลองถามอีกครั้งค่ะ",
-      );
-    }
-
-    if (teamOnlyIntents.has(intent) && !canAskTeamQuestion(actor)) {
-      return teamQuestionDeniedAnswer(intent);
-    }
-
-    return await answerIntent(db, actor, intent, now, visibilityReads);
-  } catch {
+  const visibilityReads = createVisibilityReadMemo();
+  const actor = await readPerson(db, actorPersonCode, visibilityReads);
+  if (!actor) {
     return matchedAnswer(
       intent,
-      "น้องกุ้งอ่านข้อมูลไม่ได้ในขณะนี้ กรุณาลองถามอีกครั้ง หากยังพบปัญหาให้แจ้งผู้ดูแลระบบพร้อมคำถามเดิมค่ะ",
+      "น้องกุ้งไม่พบข้อมูลผู้ใช้งานของพี่ กรุณาเชื่อมบัญชีกับรหัสพนักงานก่อน แล้วลองถามอีกครั้งค่ะ",
     );
   }
+
+  if (teamOnlyIntents.has(intent) && !canAskTeamQuestion(actor)) {
+    return teamQuestionDeniedAnswer(intent);
+  }
+
+  // D1/query failures must throw — /ask maps them to 503. Returning a 200-shaped
+  // Answer here made PHP treat "ฐานล่ม" เหมือน "ไม่มีงาน".
+  return await answerIntent(db, actor, intent, now, visibilityReads);
 }
 
 async function answerIntent(
