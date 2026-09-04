@@ -2,9 +2,12 @@ import type { MirroredTask } from "./db/repository.ts";
 import { constantTimeEqual, hashSourceId, sha256Bytes } from "./crypto.ts";
 import {
   enqueueEvents,
+  HEALTH_INGEST_SOURCE,
+  HEALTH_SYNC_SOURCE,
   linkPerson,
   personIsLinked,
   readHealth,
+  recordEndpointSuccess,
   upsertMirroredTasks,
   recordSummaryPassIssue,
 } from "./db/repository.ts";
@@ -36,26 +39,30 @@ function logAsk(ts: string, result: string, intent: string, length: number): voi
 
 async function handleHealth(env: Env, now: string): Promise<Response> {
   const ref = safeReference();
+  const unavailable = {
+    ok: false,
+    ts: now,
+    d1: "unreachable",
+    queueDepth: null,
+    lastIngestAt: null,
+    lastSyncAt: null,
+    // รูปร่างต้องเหมือนตอนปกติเสมอ — ผู้อ่าน (selfcheck) จะได้แยก "อ่านค่าไม่ได้" (null)
+    // ออกจาก "ไม่มีของค้าง" (0) ได้ · ถ้าไม่ใส่ field มาเลย ผู้อ่านจะตีความเป็น 0 แล้วเงียบ
+    deadJobs: null,
+    strandedEvents: null,
+    next: "check the D1 binding and apply migrations, then retry",
+  };
+  if (!env.DB) {
+    log(now, "health", "unavailable", ref);
+    return json(unavailable, 503);
+  }
   try {
     const health = await readHealth(env.DB);
     log(now, "health", "ok", ref);
     return json({ ok: true, ts: now, ...health });
   } catch {
     log(now, "health", "unavailable", ref);
-    return json(
-      {
-        ok: false,
-        ts: now,
-        queueDepth: null,
-        lastIngestAt: null,
-        // รูปร่างต้องเหมือนตอนปกติเสมอ — ผู้อ่าน (selfcheck) จะได้แยก "อ่านค่าไม่ได้" (null)
-        // ออกจาก "ไม่มีของค้าง" (0) ได้ · ถ้าไม่ใส่ field มาเลย ผู้อ่านจะตีความเป็น 0 แล้วเงียบ
-        deadJobs: null,
-        strandedEvents: null,
-        next: "check the D1 binding and apply migrations, then retry",
-      },
-      503,
-    );
+    return json(unavailable, 503);
   }
 }
 
@@ -77,6 +84,13 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
     log(now, "ingest", "unavailable", requestRef);
     return json(
       { ok: false, next: "configure the source hashing secret and retry" },
+      503,
+    );
+  }
+  if (!env.DB) {
+    log(now, "ingest", "unavailable", requestRef);
+    return json(
+      { ok: false, next: "check D1 availability and retry the same event ID" },
       503,
     );
   }
@@ -104,6 +118,7 @@ async function handleIngest(request: Request, env: Env, now: string): Promise<Re
       env.AIM_SOURCE_HASH_SALT,
     );
     const result = await enqueueEvents(env.DB, events);
+    await recordEndpointSuccess(env.DB, HEALTH_INGEST_SOURCE, now);
     const eventType = events.length === 1 ? events[0].eventType : "batch";
     const outcome =
       result.accepted === 0
@@ -162,6 +177,10 @@ async function handleSyncTasks(request: Request, env: Env, now: string): Promise
   if (!env.AIM_SYNC_KEY) {
     log(now, "sync_tasks", "unavailable", ref);
     return json({ ok: false, next: "configure the Worker sync secret and retry" }, 503);
+  }
+  if (!env.DB) {
+    log(now, "sync_tasks", "unavailable", ref);
+    return json({ ok: false, next: "check the D1 binding and retry" }, 503);
   }
 
   const suppliedKey = request.headers.get("X-AIM-Sync-Key") ?? "";
@@ -224,8 +243,14 @@ async function handleSyncTasks(request: Request, env: Env, now: string): Promise
 
   try {
     const result = await upsertMirroredTasks(env.DB, tasks, now);
+    await recordEndpointSuccess(env.DB, HEALTH_SYNC_SOURCE, now);
     log(now, "sync_tasks", "ok", ref);
-    return json({ ok: true, written: result.written, skipped: result.skipped, rejected });
+    return json({
+      ok: true,
+      written: result.written,
+      skipped: result.skipped,
+      rejected: rejected + result.rejected,
+    });
   } catch {
     log(now, "sync_tasks", "error", ref);
     return json({ ok: false, next: "check the D1 binding and retry" }, 503);
@@ -237,6 +262,10 @@ async function handleAdminSummary(request: Request, env: Env, now: string): Prom
   if (!env.AIM_ADMIN_KEY) {
     log(now, "admin_summary", "unavailable", ref);
     return json({ ok: false, next: "configure the Worker admin secret and retry" }, 503);
+  }
+  if (!env.DB) {
+    log(now, "admin_summary", "unavailable", ref);
+    return json({ ok: false, next: "check the D1 binding and retry" }, 503);
   }
 
   const suppliedKey = request.headers.get("X-AIM-Admin-Key") ?? "";
@@ -294,6 +323,13 @@ async function handleAsk(request: Request, env: Env, now: string): Promise<Respo
     logAsk(now, "unavailable", "none", 0);
     return json(
       { ok: false, next: "configure the Worker ask secret and retry" },
+      503,
+    );
+  }
+  if (!env.DB) {
+    logAsk(now, "unavailable", "none", 0);
+    return json(
+      { ok: false, next: "check D1 availability and retry the same question" },
       503,
     );
   }
@@ -408,6 +444,10 @@ async function handleLink(request: Request, env: Env, now: string): Promise<Resp
     log(now, "link", "unavailable", ref);
     return json({ ok: false, next: "configure the Worker link secrets and retry" }, 503);
   }
+  if (!env.DB) {
+    log(now, "link", "unavailable", ref);
+    return json({ ok: false, next: "check D1 availability and retry" }, 503);
+  }
 
   const supplied = request.headers.get("X-AIM-Link-Key") ?? "";
   let authorized = false;
@@ -482,12 +522,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
   const now = new Date().toISOString();
 
-  if (url.pathname === "/healthz") {
+  if (url.pathname === "/healthz" || url.pathname === "/health") {
     if (request.method !== "GET") {
       const ref = safeReference();
       log(now, "health", "method_not_allowed", ref);
       return json(
-        { ok: false, next: "call GET /healthz" },
+        { ok: false, next: "call GET /healthz or GET /health" },
         405,
         { allow: "GET" },
       );
@@ -562,11 +602,18 @@ export async function handleScheduled(env: Env, now: string): Promise<void> {
       `${summaries.sent}:${summaries.empty}:${summaries.retried}:${summaries.dead}:${summaries.missed}:${summaries.configMissing}`,
     );
   } catch {
-    await recordSummaryPassIssue(env.DB, `cron:${now}`, "pass_error", now);
+    if (env.DB) {
+      await recordSummaryPassIssue(env.DB, `cron:${now}`, "pass_error", now);
+    }
     log(now, "summary_cron", "unavailable", "check-ledger-and-retry");
   }
-  const result = await processQueue(env.DB, now, checkpointSafe);
-  log(now, "cron", "tick", String(result.processed));
+  try {
+    const result = await processQueue(env.DB, now, checkpointSafe);
+    log(now, "cron", "tick", String(result.processed));
+  } catch {
+    log(now, "cron", "unavailable", "check-d1-and-retry");
+    throw new Error("queue processing failed; cron_tick was not recorded");
+  }
 }
 
 export default {

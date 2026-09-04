@@ -45,7 +45,13 @@ class SQLiteD1Statement {
 
   executeBatch(): D1Result {
     const statement = this.database.prepare(this.sql);
-    if (statement.columns().length > 0) {
+    // Node's StatementSync.columns() is missing on some runtimes (22.14 here).
+    // Fall back to the SQL verb so SELECT batches used by /health and system_status still work.
+    const isQuery =
+      typeof statement.columns === "function"
+        ? statement.columns().length > 0
+        : /^\s*(?:SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(this.sql);
+    if (isQuery) {
       return d1Result(statement.all(...this.bindings), 0);
     }
     const result = statement.run(...this.bindings) as SQLiteRunResult;

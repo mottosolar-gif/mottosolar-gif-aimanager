@@ -1461,17 +1461,10 @@ describe("visibility and fail-closed behavior", () => {
       },
     } as unknown as D1Database;
 
-    const answer = await askQuestion(
-      failingVisibilityDb,
-      "P-MANAGER-A",
-      "ใครมีงานค้างมากที่สุด",
-      now,
-    );
-
-    expect(answer.text).toContain("อ่านข้อมูลไม่ได้");
-    for (const code of ["P-W1", "P-A2", "P-B1"]) {
-      expect(answer.text).not.toContain(code);
-    }
+    await expect(
+      askQuestion(failingVisibilityDb, "P-MANAGER-A", "ใครมีงานค้างมากที่สุด", now),
+    ).rejects.toThrow("visibility lookup failed");
+    expect(personQueries).toBeGreaterThan(1);
   });
 
   it("surfaces a bounded team-query failure instead of reporting an empty team", async () => {
@@ -1485,16 +1478,9 @@ describe("visibility and fail-closed behavior", () => {
       },
     } as unknown as D1Database;
 
-    const answer = await askQuestion(
-      failingTeamDb,
-      "P-MANAGER-A",
-      "สรุปงานวันนี้ทั้งทีม",
-      now,
-    );
-
-    expect(answer.text).toContain("อ่านข้อมูลไม่ได้");
-    expect(answer.text).not.toContain("งานใหม่วันนี้ 0 งาน");
-    expect(answer.text).not.toContain("ไม่มีงาน");
+    await expect(
+      askQuestion(failingTeamDb, "P-MANAGER-A", "สรุปงานวันนี้ทั้งทีม", now),
+    ).rejects.toThrow("team task query failed");
   });
 
   it("returns no data and does not throw for an unknown actor on self and team intents", async () => {
@@ -1552,7 +1538,7 @@ describe("bad input and empty data", () => {
     }
   });
 
-  it("turns a D1 prepare failure into an actionable answer", async () => {
+  it("throws instead of returning an empty-looking answer when D1 prepare fails", async () => {
     const broken = {
       prepare(): never {
         throw new Error("D1 unavailable");
@@ -1561,12 +1547,7 @@ describe("bad input and empty data", () => {
 
     await expect(
       askQuestion(broken, "P-W1", "งานของฉันมีอะไรบ้าง", now),
-    ).resolves.toMatchObject({
-      intent: "my_tasks",
-      matched: true,
-      denied: false,
-      text: expect.stringContaining("กรุณาลองถามอีกครั้ง"),
-    });
+    ).rejects.toThrow("D1 unavailable");
   });
 });
 

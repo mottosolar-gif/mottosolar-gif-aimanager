@@ -99,6 +99,26 @@ export async function enqueueEvents(
   return { accepted, duplicates };
 }
 
+export const HEALTH_INGEST_SOURCE = "ingest/line";
+export const HEALTH_SYNC_SOURCE = "sync/tasks";
+
+export interface HealthSnapshot {
+  d1: "ok";
+  queueDepth: number;
+  lastIngestAt: string | null;
+  lastSyncAt: string | null;
+  deadJobs: number;
+  strandedEvents: number;
+}
+
+const insertSyncStateSql = `
+  INSERT INTO sync_state (source_key, checkpoint, source_occurred_at, synced_at, updated_at)
+  VALUES (?, NULL, NULL, ?, ?)
+  ON CONFLICT(source_key) DO UPDATE SET
+    synced_at = excluded.synced_at,
+    updated_at = excluded.updated_at
+`;
+
 // ★ 2026-08-28: เดิมรายงานแต่ queueDepth (นับ job_queue ที่ pending) ซึ่ง **มองไม่เห็นของที่ตายไปแล้ว**
 // เกิดจริง: event 01M117EB8R3HTYZ64VDV36104Y ตายตั้งแต่ 27 ส.ค. แต่ /healthz ตอบ queueDepth:0 ok:true
 // ⇒ เป็นยามที่ให้ความมั่นใจปลอม ซึ่งอันตรายกว่าไม่มียาม เพราะทำให้เลิกมองหาปัญหา
@@ -106,13 +126,10 @@ export async function enqueueEvents(
 // deadJobs   = งานที่ยอมแพ้ถาวรแล้ว (สะสม ไม่ลดเอง) — ต้องมีคนตัดสินว่าจะตามเก็บหรือปล่อย
 // strandedEvents = แถวใน inbox_event ที่ยัง pending เกิน 15 นาที ทั้งที่ cron เดินทุกนาที
 //   15 นาทีเผื่อ retry ปกติ (30+60+120+240 วิ ≈ 8 นาที) ไว้แล้ว ⇒ เกินนี้คือค้างจริง ไม่ใช่กำลังรอ
-export async function readHealth(db: D1Database): Promise<{
-  queueDepth: number;
-  lastIngestAt: string | null;
-  deadJobs: number;
-  strandedEvents: number;
-}> {
-  const [queue, ingest, dead, stranded] = await db.batch([
+// lastIngestAt / lastSyncAt อ่านจาก sync_state ที่บันทึกตอน POST สำเร็จ (รวมชุดซ้ำ)
+//   ไม่ใช้แค่ MAX(received_at) เพราะ ingest ที่เป็น duplicate ทั้งชุดจะไม่ขยับเวลาใน inbox
+export async function readHealth(db: D1Database): Promise<HealthSnapshot> {
+  const [queue, ingestFallback, dead, stranded, checkpoints] = await db.batch([
     db.prepare("SELECT COUNT(*) AS depth FROM job_queue WHERE status = 'pending'"),
     db.prepare("SELECT MAX(received_at) AS last_ingest_at FROM inbox_event"),
     db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE status = 'dead'"),
@@ -120,17 +137,56 @@ export async function readHealth(db: D1Database): Promise<{
       `SELECT COUNT(*) AS n FROM inbox_event
        WHERE status = 'pending' AND received_at < datetime('now', '-15 minutes')`,
     ),
+    db.prepare(
+      `SELECT source_key, synced_at FROM sync_state
+       WHERE source_key IN ('${HEALTH_INGEST_SOURCE}', '${HEALTH_SYNC_SOURCE}')`,
+    ),
   ]);
-  const queueRow = queue.results[0] as { depth?: number | string } | undefined;
-  const ingestRow = ingest.results[0] as { last_ingest_at?: string | null } | undefined;
-  const deadRow = dead.results[0] as { n?: number | string } | undefined;
-  const strandedRow = stranded.results[0] as { n?: number | string } | undefined;
   return {
-    queueDepth: Number(queueRow?.depth ?? 0),
-    lastIngestAt: ingestRow?.last_ingest_at ?? null,
-    deadJobs: Number(deadRow?.n ?? 0),
-    strandedEvents: Number(strandedRow?.n ?? 0),
+    d1: "ok",
+    queueDepth: requiredCount(queue.results[0] as { depth?: number | string } | undefined, "depth"),
+    lastIngestAt:
+      checkpointTime(checkpoints.results, HEALTH_INGEST_SOURCE) ??
+      nullableText(
+        (ingestFallback.results[0] as { last_ingest_at?: string | null } | undefined)
+          ?.last_ingest_at,
+      ),
+    lastSyncAt: checkpointTime(checkpoints.results, HEALTH_SYNC_SOURCE),
+    deadJobs: requiredCount(dead.results[0] as { n?: number | string } | undefined, "n"),
+    strandedEvents: requiredCount(
+      stranded.results[0] as { n?: number | string } | undefined,
+      "n",
+    ),
   };
+}
+
+function requiredCount(row: Record<string, unknown> | undefined, field: string): number {
+  const value = row?.[field];
+  // COUNT(*) ต้องคืนแถวหนึ่งเสมอ — ผลว่างคือ D1 ไม่ได้ตอบ ไม่ใช่ "คิวว่าง = 0"
+  if (value === undefined || value === null) {
+    throw new Error(`health count query returned no ${field}`);
+  }
+  return Number(value);
+}
+
+function nullableText(value: string | null | undefined): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function checkpointTime(rows: unknown[], sourceKey: string): string | null {
+  for (const raw of rows) {
+    const row = raw as { source_key?: string; synced_at?: string | null };
+    if (row.source_key === sourceKey) return nullableText(row.synced_at);
+  }
+  return null;
+}
+
+export async function recordEndpointSuccess(
+  db: D1Database,
+  sourceKey: typeof HEALTH_INGEST_SOURCE | typeof HEALTH_SYNC_SOURCE,
+  now: string,
+): Promise<void> {
+  await db.prepare(insertSyncStateSql).bind(sourceKey, now, now).run();
 }
 
 export async function readPendingJobs(
@@ -724,48 +780,82 @@ export async function upsertMirroredTasks(
   db: D1Database,
   tasks: readonly MirroredTask[],
   now: string,
-): Promise<{ written: number; skipped: number }> {
+): Promise<{ written: number; skipped: number; rejected: number }> {
   let written = 0;
   let skipped = 0;
+  let rejected = 0;
+  const existingPeople = await readExistingPersonCodes(
+    db,
+    tasks.flatMap((task) =>
+      [task.assigneePersonCode, task.creatorPersonCode].filter(
+        (code): code is string => code !== null,
+      ),
+    ),
+  );
   for (const task of tasks) {
     if (!task.taskRef.startsWith("L-")) {
       skipped += 1;
       continue;
     }
-    try {
-      await db
-        .prepare(
-          `INSERT INTO task (task_ref, title, status, assignee_person_code, creator_person_code,
-                             due_at, completed_at, cancelled_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (task_ref) DO UPDATE SET
-             title = excluded.title,
-             status = excluded.status,
-             assignee_person_code = excluded.assignee_person_code,
-             creator_person_code = excluded.creator_person_code,
-             due_at = excluded.due_at,
-             completed_at = excluded.completed_at,
-             cancelled_at = excluded.cancelled_at,
-             updated_at = excluded.updated_at`,
-        )
-        .bind(
-          task.taskRef,
-          task.title,
-          task.status,
-          task.assigneePersonCode,
-          task.creatorPersonCode,
-          task.dueAt,
-          task.completedAt,
-          task.cancelledAt,
-          task.createdAt ?? now,
-          task.updatedAt ?? now,
-        )
-        .run();
-      written += 1;
-    } catch {
-      // แถวเดียวพังต้องไม่ล้มทั้งชุด — ฝั่งส่งจะส่งมาใหม่รอบหน้าอยู่แล้ว (ส่งทั้งชุดทุกครั้ง)
-      skipped += 1;
+    if (
+      (task.assigneePersonCode !== null &&
+        !existingPeople.has(task.assigneePersonCode)) ||
+      (task.creatorPersonCode !== null && !existingPeople.has(task.creatorPersonCode))
+    ) {
+      // คนที่ไม่มีในตาราง person เป็นข้อมูลผิด ไม่ใช่ "ข้ามเงียบ" — บอกเป็น rejected ให้ฝั่งส่งเห็น
+      rejected += 1;
+      continue;
     }
+    await db
+      .prepare(
+        `INSERT INTO task (task_ref, title, status, assignee_person_code, creator_person_code,
+                           due_at, completed_at, cancelled_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (task_ref) DO UPDATE SET
+           title = excluded.title,
+           status = excluded.status,
+           assignee_person_code = excluded.assignee_person_code,
+           creator_person_code = excluded.creator_person_code,
+           due_at = excluded.due_at,
+           completed_at = excluded.completed_at,
+           cancelled_at = excluded.cancelled_at,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(
+        task.taskRef,
+        task.title,
+        task.status,
+        task.assigneePersonCode,
+        task.creatorPersonCode,
+        task.dueAt,
+        task.completedAt,
+        task.cancelledAt,
+        task.createdAt ?? now,
+        task.updatedAt ?? now,
+      )
+      .run();
+    written += 1;
   }
-  return { written, skipped };
+  return { written, skipped, rejected };
+}
+
+const existingPersonCodeChunkSize = 80;
+
+async function readExistingPersonCodes(
+  db: D1Database,
+  personCodes: readonly string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(personCodes)];
+  const found = new Set<string>();
+  for (let index = 0; index < unique.length; index += existingPersonCodeChunkSize) {
+    const chunk = unique.slice(index, index + existingPersonCodeChunkSize);
+    const query = await db
+      .prepare(
+        `SELECT person_code FROM person WHERE person_code IN (${chunk.map(() => "?").join(", ")})`,
+      )
+      .bind(...chunk)
+      .all<{ person_code: string }>();
+    for (const row of query.results) found.add(row.person_code);
+  }
+  return found;
 }

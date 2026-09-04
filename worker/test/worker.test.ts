@@ -68,10 +68,31 @@ class MemoryD1 {
   inboxEvents: StoredInbox[] = [];
   jobs: StoredJob[] = [];
   ledgerRows: StoredLedger[] = [];
+  syncState: Array<{ source_key: string; synced_at: string }> = [];
   failDoneUpdateOnce = false;
+  failNextWrite = false;
+  failPendingJobsRead = false;
+  emptyHealthCounts = false;
+  failHealthRead = false;
 
   failNextDoneUpdate(): void {
     this.failDoneUpdateOnce = true;
+  }
+
+  failNextMutation(): void {
+    this.failNextWrite = true;
+  }
+
+  failNextPendingJobsRead(): void {
+    this.failPendingJobsRead = true;
+  }
+
+  returnEmptyHealthCounts(): void {
+    this.emptyHealthCounts = true;
+  }
+
+  failNextHealthRead(): void {
+    this.failHealthRead = true;
   }
 
   seedJob(options: {
@@ -122,6 +143,23 @@ class MemoryD1 {
   }
 
   execute(statement: MemoryStatement): D1Result {
+      if (this.failNextWrite && /INSERT|UPDATE/i.test(statement.query)) {
+        this.failNextWrite = false;
+        throw new Error("simulated D1 write failure");
+      }
+      if (/INSERT INTO sync_state/i.test(statement.query)) {
+        const [sourceKey, syncedAt] = statement.values;
+        const key = String(sourceKey);
+        const existing = this.syncState.find((row) => row.source_key === key);
+        if (existing) existing.synced_at = String(syncedAt);
+        else this.syncState.push({ source_key: key, synced_at: String(syncedAt) });
+        return result([], 1);
+      }
+      if (/FROM sync_state/i.test(statement.query) && /source_key/i.test(statement.query)) {
+        return result(
+          this.syncState.map((row) => ({ source_key: row.source_key, synced_at: row.synced_at })),
+        );
+      }
       if (/INSERT OR IGNORE INTO inbox_event/i.test(statement.query)) {
         const [
           eventId,
@@ -174,6 +212,10 @@ class MemoryD1 {
         return result([], duplicate ? 0 : 1);
       }
       if (/SELECT id, event_id, kind, attempts/i.test(statement.query)) {
+        if (this.failPendingJobsRead) {
+          this.failPendingJobsRead = false;
+          throw new Error("simulated pending-jobs read failure");
+        }
         const [now, limit] = statement.values;
         const rows = this.jobs
           .filter((job) => job.status === "pending" && job.next_run_at <= String(now))
@@ -256,9 +298,11 @@ class MemoryD1 {
       }
       // ★ 2026-08-28 — /healthz มองเห็นของที่ตายและของที่ค้างแล้ว (เดิมเห็นแต่คิว pending)
       if (/status = 'dead'/i.test(statement.query) && /COUNT\(\*\) AS n/i.test(statement.query)) {
+        if (this.emptyHealthCounts) return result([]);
         return result([{ n: this.jobs.filter((job) => job.status === "dead").length }]);
       }
       if (/inbox_event/i.test(statement.query) && /COUNT\(\*\) AS n/i.test(statement.query)) {
+        if (this.emptyHealthCounts) return result([]);
         // เกณฑ์เดียวกับของจริง: ยัง pending และรับเข้ามาเกิน 15 นาทีแล้ว
         const cutoff = new Date(Date.now() - 15 * 60_000).toISOString();
         return result([
@@ -280,6 +324,11 @@ class MemoryD1 {
         return result([], row ? 1 : 0);
       }
       if (/COUNT\(\*\) AS depth/i.test(statement.query)) {
+        if (this.failHealthRead) {
+          this.failHealthRead = false;
+          throw new Error("simulated health D1 failure");
+        }
+        if (this.emptyHealthCounts) return result([]);
         return result([{ depth: this.jobs.filter((job) => job.status === "pending").length }]);
       }
       if (/MAX\(received_at\)/i.test(statement.query)) {
@@ -515,18 +564,81 @@ describe("aim-ingest Worker", () => {
     expect(database.jobs).toHaveLength(0);
   });
 
-  it("reports queue depth and the last ingest time from D1", async () => {
+  it("reports queue depth, last ingest time, last sync time, dead-letter depth, and D1 reachability", async () => {
     const database = new MemoryD1();
     const env = makeEnv(database);
     await handleRequest(ingestRequest(JSON.stringify(validPayload())), env);
 
-    const response = await handleRequest(new Request("https://aim.example/healthz"), env);
-    const body = (await response.json()) as Record<string, unknown>;
+    const healthz = await handleRequest(new Request("https://aim.example/healthz"), env);
+    const health = await handleRequest(new Request("https://aim.example/health"), env);
+    const healthzBody = (await healthz.json()) as Record<string, unknown>;
+    const healthBody = (await health.json()) as Record<string, unknown>;
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({ ok: true, queueDepth: 1 });
-    expect(body.lastIngestAt).toEqual(expect.any(String));
-    expect(body.ts).toEqual(expect.any(String));
+    expect(healthz.status).toBe(200);
+    expect(health.status).toBe(200);
+    expect(healthzBody).toMatchObject({
+      ok: true,
+      d1: "ok",
+      queueDepth: 1,
+      deadJobs: 0,
+      strandedEvents: 0,
+      lastSyncAt: null,
+    });
+    expect(healthzBody.lastIngestAt).toEqual(expect.any(String));
+    expect(healthzBody.ts).toEqual(expect.any(String));
+    expect(healthBody).toMatchObject({
+      ok: true,
+      d1: "ok",
+      queueDepth: 1,
+      lastIngestAt: healthzBody.lastIngestAt,
+      lastSyncAt: null,
+    });
+  });
+
+  it("returns 503 from /healthz when D1 throws or returns empty counts, not 200 with zeros", async () => {
+    const thrown = new MemoryD1();
+    thrown.failNextHealthRead();
+    const thrownResponse = await handleRequest(
+      new Request("https://aim.example/healthz"),
+      makeEnv(thrown),
+    );
+    const empty = new MemoryD1();
+    empty.returnEmptyHealthCounts();
+    const emptyResponse = await handleRequest(
+      new Request("https://aim.example/health"),
+      makeEnv(empty),
+    );
+    const missingDb = await handleRequest(new Request("https://aim.example/healthz"), {
+      ...makeEnv(new MemoryD1()),
+      DB: undefined as unknown as D1Database,
+    });
+
+    for (const response of [thrownResponse, emptyResponse, missingDb]) {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        d1: "unreachable",
+        queueDepth: null,
+        lastIngestAt: null,
+        lastSyncAt: null,
+        deadJobs: null,
+        strandedEvents: null,
+        next: expect.any(String),
+      });
+    }
+  });
+
+  it("returns 503 from /ingest/line when D1 cannot persist, not 200 with accepted:0", async () => {
+    const database = new MemoryD1();
+    database.failNextMutation();
+    const response = await handleRequest(
+      ingestRequest(JSON.stringify(validPayload("evt-d1-down"))),
+      makeEnv(database),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ ok: false, next: expect.any(String) });
+    expect(database.inboxEvents).toHaveLength(0);
   });
 
   it("rejects unrecognized metadata instead of storing an attacker-controlled label", async () => {
@@ -825,6 +937,35 @@ describe("POST /ask", () => {
       database.close();
     }
   });
+
+  it("returns 503 from /ask when D1 cannot answer, not 200 with an empty-looking success", async () => {
+    const database = askDatabase();
+    try {
+      const broken = {
+        prepare(sql: string): D1PreparedStatement {
+          if (/FROM person_link/i.test(sql) && /person_code = \?/i.test(sql)) {
+            return database.asD1().prepare(sql);
+          }
+          throw new Error("simulated ask D1 failure");
+        },
+      } as unknown as D1Database;
+      const missingDb = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉันมีอะไรบ้าง" })),
+        { ...askEnv(database), DB: undefined as unknown as D1Database },
+      );
+      const down = await handleRequest(
+        askRequest(JSON.stringify({ person_code: "P-ASSIST", question: "งานของฉันมีอะไรบ้าง" })),
+        { ...askEnv(database), DB: broken },
+      );
+
+      expect(missingDb.status).toBe(503);
+      expect(down.status).toBe(503);
+      expect(await missingDb.json()).toMatchObject({ ok: false, next: expect.any(String) });
+      expect(await down.json()).toMatchObject({ ok: false, next: expect.any(String) });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 describe("scheduled queue processing", () => {
@@ -832,6 +973,16 @@ describe("scheduled queue processing", () => {
 
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  it("does not record a successful cron_tick when reading the queue from D1 fails", async () => {
+    const database = new MemoryD1();
+    database.failNextPendingJobsRead();
+
+    await expect(processQueue(database as unknown as D1Database, now)).rejects.toThrow(
+      /pending-jobs read failure/,
+    );
+    expect(database.ledgerRows).toEqual([]);
   });
 
   it("processes zero jobs but still writes a cron_tick ledger row", async () => {
@@ -1256,6 +1407,55 @@ describe("POST /sync/tasks", () => {
     }
   });
 
+  it("records lastSyncAt on /health after a successful /sync/tasks call", async () => {
+    const database = new SQLiteD1();
+    try {
+      const synced = await handleRequest(syncRequest({ tasks: [liveTask] }), syncEnv(database));
+      expect(synced.status).toBe(200);
+
+      const health = await handleRequest(
+        new Request("https://aim.example/health"),
+        syncEnv(database),
+      );
+      const body = (await health.json()) as Record<string, unknown>;
+      expect(health.status).toBe(200);
+      expect(body).toMatchObject({ ok: true, d1: "ok", lastSyncAt: expect.any(String) });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("returns 503 from /sync/tasks when D1 cannot write, not 200 with written:0", async () => {
+    const database = new SQLiteD1();
+    try {
+      const base = database.asD1();
+      const broken = {
+        prepare(sql: string): D1PreparedStatement {
+          if (/INSERT INTO task/i.test(sql) || /INTO sync_state/i.test(sql)) {
+            throw new Error("simulated sync D1 failure");
+          }
+          return base.prepare(sql);
+        },
+        batch: base.batch.bind(base),
+      } as unknown as D1Database;
+      const down = await handleRequest(syncRequest({ tasks: [liveTask] }), {
+        ...syncEnv(database),
+        DB: broken,
+      });
+      const missingDb = await handleRequest(syncRequest({ tasks: [liveTask] }), {
+        ...syncEnv(database),
+        DB: undefined as unknown as D1Database,
+      });
+
+      expect(down.status).toBe(503);
+      expect(missingDb.status).toBe(503);
+      expect(await down.json()).toMatchObject({ ok: false, next: expect.any(String) });
+      expect(await readTasks(database)).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("ปิดอยู่ถ้าไม่ตั้งกุญแจ · กุญแจผิดตอบ 403 · ชุดใหญ่เกินถูกปฏิเสธทั้งชุด", async () => {
     const database = new SQLiteD1();
     try {
@@ -1298,7 +1498,8 @@ describe("sync กับ person_code ที่ไม่มีจริง", () =
       const rows = await database.asD1()
         .prepare("SELECT task_ref, assignee_person_code FROM task").all<{ task_ref: string; assignee_person_code: string | null }>();
       // ถ้าเก็บได้ = งานลอยอยู่โดยไม่มีเจ้าของจริง ⇒ canView() ตัดสินจากค่าที่ไม่มีความหมาย
-      console.log("   ผลลัพธ์:", JSON.stringify(body), "| แถวในฐาน:", JSON.stringify(rows.results));
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ ok: true, written: 0, rejected: 1 });
       expect(rows.results.length).toBe(0);
     } finally {
       database.close();
