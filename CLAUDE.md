@@ -1,6 +1,6 @@
 # aim — AI Manager (กติกาถาวร · เปิดโฟลเดอร์นี้ต้องอ่านก่อนแตะอะไร)
 
-อัปเดต **2026-09-04** ที่ HEAD `252be4f` · รีโปนี้คือ **บ้านใหม่ของ AI Manager** (Cloudflare Worker + D1)
+อัปเดต **2026-09-04 ดึก** ที่ HEAD `298b317` (= `main` `c4e10e4` + branch นี้) · รีโปนี้คือ **บ้านใหม่ของ AI Manager** (Cloudflare Worker + D1)
 ที่แยกออกมาจาก `C:\WebApp\vendor-ksk`
 
 > ## 📍 ฝั่ง LIVE มีบ้านบน GitHub แล้ว — `mottosolar-gif/KSK-Decepticons`
@@ -188,6 +188,7 @@ migration **3 ใบ** (`0001_initial` · `0002_task` · `0003_postback`) · **6
 | `README.md` เขียนสถานะผิด 4 ข้อ · `bridge/README.md` ข้อ 4 ผิด | ✅ แก้แล้วทั้งคู่ (commit `32ad837`) |
 | ปุ่มกดแล้วสถานะถูกซิงก์ทับหายภายใน 10 นาที (D-P0-18) | 📄 commit `d283388` + D-P0-19 ยืนยัน "วงจรการ์ดครบ" |
 | เกณฑ์ WP-P0-6 ข้อ 6 อ้างสคริปต์ที่ถูกลบไปแล้ว | 📄 D-P0-17 แก้ถ้อยคำแล้ว |
+| `GET /healthz` ตอบ `strandedEvents:0` เสมอ แม้มีแถวค้างเป็นชั่วโมง — `received_at` (ISO `T`/`Z`) เทียบ string ตรงกับ `datetime('now',...)` (ช่องว่าง) ตำแหน่งที่ 10 `T` > ช่องว่างเสมอ ⇒ คลาสเดียวกับบั๊ก D-P0-17 | ✅ PR #3 commit `c4e10e4` — ครอบ `datetime()` ทั้งสองข้าง + เทสจริงบน SQLite จริง · sabotage-check แล้ว (ย้อนบั๊ก → ตก 1/1 → คืน → เขียว) |
 
 ### ✅ ข้อที่เคยขัดกันเอง — ปิดแล้ว (2026-09-04)
 
@@ -215,12 +216,12 @@ npm run lint               # eslint (no-floating-promises / no-misused-promises)
 npm run db:migration:check # migration รันซ้ำได้ + body_ref ยัง NULL-only
 ```
 
-✅ **รันจริงเมื่อ 2026-09-03 บน HEAD `252be4f` (Linux · Node 22) — ผ่านครบ 4/4:**
+✅ **รันจริงเมื่อ 2026-09-04 ดึก บน HEAD `298b317` (Linux · Node 22) — ผ่านครบ 4/4:**
 
 | ด่าน | ผล |
 |---|---|
 | typecheck | สะอาด (exit 0) |
-| test | **284 ผ่าน / 7 ไฟล์** — queryEngine 181 · worker 41 · summary 25 · taskMachine 18 · visibility 11 · queueTaskAction 6 · outbound 2 |
+| test | **285 ผ่าน / 7 ไฟล์** — queryEngine 181 · worker 42 · summary 25 · taskMachine 18 · visibility 11 · queueTaskAction 6 · outbound 2 |
 | lint | สะอาด (exit 0) |
 | migration check | ผ่าน 2 รอบใน memory · 3 ไฟล์ · `body_ref` ยัง NULL-only |
 
