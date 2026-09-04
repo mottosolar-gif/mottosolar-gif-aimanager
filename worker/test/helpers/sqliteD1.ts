@@ -45,12 +45,18 @@ class SQLiteD1Statement {
 
   executeBatch(): D1Result {
     const statement = this.database.prepare(this.sql);
-    if (statement.columns().length > 0) {
+    // node:sqlite StatementSync has no columns() in this runtime. insert.all()
+    // also returns [] instead of throwing, so we cannot probe by calling all().
+    if (sqlReturnsRows(this.sql)) {
       return d1Result(statement.all(...this.bindings), 0);
     }
     const result = statement.run(...this.bindings) as SQLiteRunResult;
     return d1Result([], result.changes, result.lastInsertRowid);
   }
+}
+
+function sqlReturnsRows(sql: string): boolean {
+  return /^(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(sql.trimStart());
 }
 
 export class SQLiteD1 {

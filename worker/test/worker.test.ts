@@ -259,7 +259,8 @@ class MemoryD1 {
         return result([{ n: this.jobs.filter((job) => job.status === "dead").length }]);
       }
       if (/inbox_event/i.test(statement.query) && /COUNT\(\*\) AS n/i.test(statement.query)) {
-        // เกณฑ์เดียวกับของจริง: ยัง pending และรับเข้ามาเกิน 15 นาทีแล้ว
+        // JavaScript ISO-to-ISO comparison is not the production SQL. The
+        // SQLite proof lives in the /healthz strandedEvents test below.
         const cutoff = new Date(Date.now() - 15 * 60_000).toISOString();
         return result([
           {
@@ -527,6 +528,58 @@ describe("aim-ingest Worker", () => {
     expect(body).toMatchObject({ ok: true, queueDepth: 1 });
     expect(body.lastIngestAt).toEqual(expect.any(String));
     expect(body.ts).toEqual(expect.any(String));
+  });
+
+  it("counts a pending inbox row as stranded when its ISO received_at is older than 15 minutes", async () => {
+    // MemoryD1 cannot prove this. It compared ISO to ISO in JavaScript, so the
+    // healthz mock stayed green while production SQLite compared toISOString()
+    // ('2026-09-04T05:54:42.913Z') against datetime('now', '-15 minutes')
+    // ('2026-09-04 06:39:42'). At index 10, 'T' > space, so
+    // received_at < datetime(...) is never true and strandedEvents stays 0
+    // even when a row has been pending for hours — the same false-confidence
+    // class as D-P0-15, on the gauge added after a real stranded event.
+    const database = new SQLiteD1();
+    const env: Env = {
+      AIM_ASK_KEY: "test-ask-key",
+      AIM_LINK_KEY: "test-link-key",
+      AIM_INGEST_KEY: ingestKey,
+      AIM_SOURCE_HASH_SALT: sourceSalt,
+      DB: database.asD1(),
+    };
+
+    async function insertInbox(
+      eventId: string,
+      receivedAt: string,
+      status: string,
+    ): Promise<void> {
+      await database
+        .asD1()
+        .prepare(
+          `INSERT INTO inbox_event
+           (event_id, event_type, message_type, source_type, occurred_at, received_at,
+            payload_bytes, payload_sha256, status)
+           VALUES (?, 'message', 'text', 'group', ?, ?, 1, ?, ?)`,
+        )
+        .bind(eventId, receivedAt, receivedAt, "a".repeat(64), status)
+        .run();
+    }
+
+    const hourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+    const minuteAgo = new Date(Date.now() - 60_000).toISOString();
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    await insertInbox("evt-stranded-old", hourAgo, "pending");
+    await insertInbox("evt-stranded-fresh", minuteAgo, "pending");
+    await insertInbox("evt-stranded-dead", twoHoursAgo, "dead");
+
+    const response = await handleRequest(
+      new Request("https://aim.example/healthz"),
+      env,
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.strandedEvents).toBe(1);
   });
 
   it("rejects unrecognized metadata instead of storing an attacker-controlled label", async () => {
