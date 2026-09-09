@@ -182,7 +182,7 @@ role/department ซ้ำที่อื่น:
 ## แชทบอทน้องกุ้ง (query engine)
 
 `worker/src/queryEngine.ts` เป็นแชทบอทภาษาไทยแบบ **rule-based จับคำสำคัญ ไม่ใช่ LLM** ชื่อ **"น้องกุ้ง"**
-(ลงท้ายด้วย ค่ะ/คะ เสมอ) รองรับ 19 คำถามมาตรฐาน แบ่งเป็น 3 กลุ่ม:
+(ลงท้ายด้วย ค่ะ/คะ เสมอ) รองรับ 20 คำถามมาตรฐาน แบ่งเป็น 3 กลุ่ม:
 
 - **งานของฉัน** — งานทั้งหมด/ค้างอยู่/เกินกำหนด/เสร็จวันนี้/เสร็จสัปดาห์นี้/งานถัดไป/งานล่าสุดที่ได้รับ
 - **งานทีม** (เฉพาะ role `manager`/`owner` — ผ่าน `canAskTeamQuestion`) — ใครยังไม่รับงาน, ใครค้างมากสุด,
@@ -295,7 +295,7 @@ npm run db:dump
 | ไฟล์ | เนื้อหา |
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | กติกาถาวร + สถานะล่าสุด — **อ่านก่อนเสมอ** |
-| [`docs/DECISIONS_P0.md`](./docs/DECISIONS_P0.md) | บันทึกคำตัดสิน D-P0-01 ถึง D-P0-13 (append-only) ที่ห้ามรื้อซ้ำ |
+| [`docs/DECISIONS_P0.md`](./docs/DECISIONS_P0.md) | บันทึกคำตัดสิน D-P0-01 ถึง D-P0-19 (append-only) ที่ห้ามรื้อซ้ำ |
 | [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md) | สถาปัตยกรรม 4 ชั้นจริง (ใช้แทน ARCHITECTURE.md) + แผนเฟส P0–P5 |
 | [`docs/WORK_PACKAGES_P0.md`](./docs/WORK_PACKAGES_P0.md) / [`P1`](./docs/WORK_PACKAGES_P1.md) / [`P2`](./docs/WORK_PACKAGES_P2.md) | ใบสั่งงานรายเฟส — **P1 น่าเชื่อถือว่าปิดจริง**, P0/P2 ให้เช็คสถานะจาก CLAUDE.md แทนไฟล์นี้ |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) / [`docs/DATABASE_SCHEMA.md`](./docs/DATABASE_SCHEMA.md) | ดีไซน์เริ่มต้น (2026-08-26) **ถูกแทนที่แล้ว** วันถัดมาโดย IMPLEMENTATION_PLAN.md — ใช้อ้างอิงตรรกะ state machine ได้ แต่อย่าใช้เป็นสถาปัตยกรรม/schema ปัจจุบัน |
