@@ -21,10 +21,10 @@ async function checkFreshDatabase() {
     "inbox_event",
     "job_queue",
     "ledger",
-    "outbound_queue",
+    "outbound_queue", // ไม่ใช้งาน (ไม่มีโค้ดอ้างถึง · จดไว้ 2026-09-10 · ลบใน migration รอบถัดไปตามกติกา P5)
     "person",
     "person_link",
-    "sync_state",
+    "sync_state", // ไม่ใช้งาน (ไม่มีโค้ดอ้างถึง · จดไว้ 2026-09-10 · ลบใน migration รอบถัดไปตามกติกา P5)
     "task",
     "task_event",
   ];

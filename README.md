@@ -51,7 +51,7 @@ Cloudflare Worker + D1 ที่รับ LINE event จากระบบ LINE 
 
 ## สถาปัตยกรรม
 
-สถาปัตยกรรมจริงที่ใช้อยู่คือ **4 ชั้น แยกบ้านกันชัดเจน** ตาม `docs/IMPLEMENTATION_PLAN.md` §2
+สถาปัตยกรรมที่**รันจริง** อยู่ที่ `docs/IMPLEMENTATION_PLAN.md` §2 (as-built 2026-09-10) และ `docs/AS_BUILT.md` — แบบ 4 ชั้นเดิมของ 2026-08-27 ถูกเก็บไว้เป็นประวัติที่ §2-เดิม (สร้างจริงได้ 2 ชั้น: สมองอยู่ฝั่ง PHP · คลาวด์เป็นสำเนา+เครื่องตอบ · homelab ไม่ได้เป็นสมอง · Notion ไม่เคยใช้)
 (เอกสารนี้เขียนทับดีไซน์เดิมใน `docs/ARCHITECTURE.md`/`docs/DATABASE_SCHEMA.md` ที่เสนอให้ต่อยอด
 ฐานข้อมูลเดิมบน `cim-server` ในบ้านเดียว — ดีไซน์นั้นถูกเปลี่ยนไปแล้ววันถัดมา อย่าใช้เป็นสถาปัตยกรรมปัจจุบัน):
 
@@ -204,10 +204,10 @@ budget ของข้อความ LINE เสมอ (ตัดรายก�
 | `person` | ทะเบียนคน — เก็บแค่ `person_code`/แผนก/บทบาท ไม่มีชื่อจริง |
 | `person_link` | ผูก source hash (LINE) เข้ากับ `person_code` |
 | `ledger` | log ผลลัพธ์ทุกการกระทำ |
-| `sync_state` | checkpoint การ sync ต่อแหล่งข้อมูลภายนอก |
+| `sync_state` | checkpoint การ sync ต่อแหล่งข้อมูลภายนอก — **ไม่ใช้งาน (ไม่มีโค้ดอ้างถึง · จดไว้ 2026-09-10 · ลบใน migration รอบถัดไปตามกติกา P5)** (`grep -rn "sync_state" worker/src` = 0 hit; sync ไม่มี checkpoint ตามดีไซน์ ส่งชุดเต็มทุก 10 นาที — D-P0-18) |
 | `task` | งานแต่ละใบ + สถานะ + กำหนดเวลา/ตำแหน่ง |
 | `task_event` | audit trail การเปลี่ยนสถานะงาน |
-| `outbound_queue` | คิวการแจ้งเตือนขาออกที่ผูกกับงาน/ผู้รับ |
+| `outbound_queue` | คิวการแจ้งเตือนขาออกที่ผูกกับงาน/ผู้รับ — **ไม่ใช้งาน (ไม่มีโค้ดอ้างถึง · จดไว้ 2026-09-10 · ลบใน migration รอบถัดไปตามกติกา P5)** (`grep -rn "outbound_queue" worker/src` = 0 hit; แจ้งเตือนขาออกจริงวิ่งตรงผ่าน `worker/src/outbound.ts`) |
 
 **`docs/ARCHITECTURE.md`/`docs/DATABASE_SCHEMA.md` อธิบายสคีมาคนละชุดกับของจริง** (ดีไซน์เริ่มต้นที่ถูกแทนที่แล้ว)
 ถ้าต้องการโครงสร้างตัวจริง ให้อ่าน `schema/migrations/*.sql` โดยตรง
@@ -296,7 +296,7 @@ npm run db:dump
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | กติกาถาวร + สถานะล่าสุด — **อ่านก่อนเสมอ** |
 | [`docs/DECISIONS_P0.md`](./docs/DECISIONS_P0.md) | บันทึกคำตัดสิน D-P0-01 ถึง D-P0-29 + คำตัดสินแบบวันที่ (D-YYYY-MM-DD-ก) (append-only) ที่ห้ามรื้อซ้ำ |
-| [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md) | สถาปัตยกรรม 4 ชั้นจริง (ใช้แทน ARCHITECTURE.md) + แผนเฟส P0–P5 |
+| [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md) | §2 สถาปัตยกรรมที่รันจริง (as-built 2026-09-10) · §2-เดิม แบบ 4 ชั้นของ 2026-08-27 เก็บเป็นประวัติ · แผนเฟส P0–P5 |
 | [`docs/WORK_PACKAGES_P0.md`](./docs/WORK_PACKAGES_P0.md) / [`P1`](./docs/WORK_PACKAGES_P1.md) / [`P2`](./docs/WORK_PACKAGES_P2.md) | ใบสั่งงานรายเฟส — **P1 น่าเชื่อถือว่าปิดจริง**, P0/P2 ให้เช็คสถานะจาก CLAUDE.md แทนไฟล์นี้ |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) / [`docs/DATABASE_SCHEMA.md`](./docs/DATABASE_SCHEMA.md) | ดีไซน์เริ่มต้น (2026-08-26) **ถูกแทนที่แล้ว** วันถัดมาโดย IMPLEMENTATION_PLAN.md — ใช้อ้างอิงตรรกะ state machine ได้ แต่อย่าใช้เป็นสถาปัตยกรรม/schema ปัจจุบัน |
 | [`bridge/README.md`](./bridge/README.md) | รายละเอียดสะพาน PHP ↔ LINE |
