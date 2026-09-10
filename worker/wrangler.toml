@@ -1,0 +1,14 @@
+name = "aim-ingest"
+account_id = "662dcc120f1f33b593bbb492ad1b7359"
+main = "src/index.ts"
+compatibility_date = "2026-08-27"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aim-db"
+database_id = "e053768d-376d-405a-a4de-6cd526d0015a"
+migrations_dir = "../schema/migrations"
+
+[triggers]
+crons = ["*/1 * * * *"]
