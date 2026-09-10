@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Manager As-Built · 2026-09-10 (ตรวจจากเครื่องจริง)</title>
+<style>
+  :root{--paper:#EEF1F4;--card:#FFFFFF;--sunk:#E4E9ED;--ink:#16202B;--ink-2:#4A5866;--ink-3:#75828F;--rule:#C7D0D9;--rule-soft:#DDE3E9;--plan:#0B6E8C;--alert:#B24A20;--ok:#2E6F4E;--warn:#8A6410;--shadow:0 1px 2px rgba(22,32,43,.06);--display:"Chakra Petch","IBM Plex Sans Thai",system-ui,sans-serif;--body:"IBM Plex Sans Thai",system-ui,-apple-system,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",monospace}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#11171E;--card:#18202A;--sunk:#131A22;--ink:#E4EAF0;--ink-2:#A3B0BD;--ink-3:#78848F;--rule:#2D3944;--rule-soft:#232E39;--plan:#4FB4D4;--alert:#E08355;--ok:#66BE8E;--warn:#D6A63F;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.72;padding-inline:20px;margin:0}
+  .wrap{max-width:920px;margin:0 auto;padding-block:44px 72px}
+  p{margin:0;max-width:68ch}
+  h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.24}
+  .mast{display:flex;flex-direction:column;gap:18px;padding-bottom:26px;border-bottom:2px solid var(--ink)}
+  .stamp{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--alert);display:flex;flex-wrap:wrap;gap:14px;align-items:baseline}
+  .stamp span:not(:first-child){color:var(--ink-3)}
+  h1{font-size:clamp(30px,5.4vw,46px);font-weight:700;letter-spacing:-.01em}
+  .thesis{font-size:clamp(17px,2.2vw,20px);line-height:1.62;color:var(--ink-2);max-width:60ch}
+  .thesis b{color:var(--ink);font-weight:600}
+  section{margin-top:58px}
+  .eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px}
+  h2{font-size:clamp(21px,3vw,27px);font-weight:600;margin-bottom:14px}
+  .lede{color:var(--ink-2);margin-bottom:26px}
+  code{font-family:var(--mono);font-size:.88em;background:var(--sunk);padding:.1em .34em;border-radius:3px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:22px;font-size:13.5px;color:var(--ink-2)}
+  .legend div{display:flex;gap:8px;align-items:baseline}
+  .legend b{color:var(--ink);font-weight:600;font-size:14px}
+  .plates{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .plate{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:18px 16px 14px;box-shadow:var(--shadow)}
+  .plate.built{border-color:var(--alert)}
+  .plate-hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--rule-soft)}
+  .plate-hd h3{font-size:16px;font-weight:600}
+  .plate-hd .when{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .plate.plan .plate-hd h3{color:var(--plan)}
+  .plate.built .plate-hd h3{color:var(--alert)}
+  .flowbox{border:1.5px solid var(--rule);border-radius:4px;padding:10px 12px;margin:8px 0;background:var(--sunk);font-size:13px;line-height:1.5}
+  .flowbox b{display:block;font-size:13.5px}
+  .flowbox .n{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--plan)}
+  .plate.built .flowbox .n{color:var(--alert)}
+  .plate.built .flowbox{border-color:var(--alert)}
+  .arrow{font-family:var(--mono);font-size:11px;color:var(--ink-2);text-align:center;padding:2px 0}
+  .plate.built .arrow.hot{color:var(--alert);font-weight:600}
+  .ghost{border-style:dashed;color:var(--ink-3)}
+  .ghost b{text-decoration:line-through;color:var(--ink-3)}
+  figcaption{margin-top:16px;font-size:13.5px;line-height:1.62;color:var(--ink-2);max-width:74ch}
+  .callout{margin-top:30px;border-left:3px solid var(--alert);background:var(--card);border-radius:0 4px 4px 0;padding:20px 22px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px}
+  .callout h3{font-size:17px;font-weight:600;color:var(--alert)}
+  .callout.ok{border-left-color:var(--ok)} .callout.ok h3{color:var(--ok)}
+  .flow{font-family:var(--mono);font-size:12.5px;line-height:1.9;background:var(--sunk);border-radius:3px;padding:12px 14px;overflow-x:auto;white-space:pre;color:var(--ink-2)}
+  .flow b{color:var(--ink);font-weight:600}.flow .hot{color:var(--alert);font-weight:600}
+  .tablewrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:14.5px}
+  th,td{text-align:left;vertical-align:top;padding:14px 16px 14px 0;border-bottom:1px solid var(--rule-soft)}
+  th{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--rule);padding-bottom:9px}
+  td:first-child{width:30%;font-weight:600}
+  td .sub{display:block;font-weight:400;color:var(--ink-3);font-size:13px;line-height:1.5;margin-top:2px}
+  tbody tr:last-child td{border-bottom:none}
+  .gates{display:flex;flex-direction:column;margin-top:4px}
+  .gate{display:grid;grid-template-columns:58px 1fr auto;gap:18px;align-items:start;padding:16px 0;border-bottom:1px solid var(--rule-soft)}
+  .gate:last-child{border-bottom:none}
+  .gate .code{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--ink-3);padding-top:1px}
+  .gate.done .code{color:var(--ok)}.gate.open .code{color:var(--warn)}.gate.blocked .code{color:var(--alert)}
+  .gate .what{font-size:14.5px;line-height:1.6}.gate .what b{font-weight:600}
+  .gate .what .g{display:block;color:var(--ink-3);font-size:13px;margin-top:3px}
+  .chip{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.04em;padding:4px 10px;border-radius:2px;white-space:nowrap;border:1px solid currentColor}
+  .chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--alert)}
+  .drift{display:grid;grid-template-columns:repeat(2,1fr);gap:0 30px}
+  .drift div{padding:15px 0;border-bottom:1px solid var(--rule-soft);font-size:14.5px;line-height:1.6}
+  .drift b{font-weight:600;display:block;margin-bottom:1px}.drift span{color:var(--ink-2)}
+  .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .num{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:14px 16px;box-shadow:var(--shadow)}
+  .num .v{font-family:var(--display);font-size:26px;font-weight:700;line-height:1.1}
+  .num .k{font-size:12.5px;color:var(--ink-3);margin-top:4px;line-height:1.4}
+  .num.ok .v{color:var(--ok)}.num.bad .v{color:var(--alert)}.num.plan .v{color:var(--plan)}
+  .timeline{border-left:2px solid var(--rule);margin-left:6px;padding-left:18px}
+  .tl{position:relative;padding:8px 0 12px;font-size:14.5px;line-height:1.6}
+  .tl::before{content:"";position:absolute;left:-24px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--ok);border:2px solid var(--paper)}
+  .tl.bad::before{background:var(--alert)}.tl.warn::before{background:var(--warn)}
+  .tl .t{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em}
+  .bottom{margin-top:58px;padding:30px 0 0;border-top:2px solid var(--ink);display:flex;flex-direction:column;gap:16px}
+  .bottom .two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .quote{padding:18px 20px;border-radius:4px;background:var(--card);border:1px solid var(--rule);box-shadow:var(--shadow)}
+  .quote .k{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;margin-bottom:7px}
+  .quote.a .k{color:var(--plan)}.quote.b .k{color:var(--alert)}.quote p{font-size:15.5px;line-height:1.6}
+  .verdict{font-size:16.5px;line-height:1.7;max-width:70ch}.verdict b{font-weight:600}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--rule-soft);font-family:var(--mono);font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  a{color:var(--plan)}
+  @media (max-width:760px){.plates,.drift,.bottom .two{grid-template-columns:1fr}.nums{grid-template-columns:1fr 1fr}.gate{grid-template-columns:46px 1fr;gap:12px}.gate .chip{grid-column:2}body{font-size:15.5px}.wrap{padding-block:34px 56px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="mast">
+  <div class="stamp"><span>As-Built · ผังของจริง</span><span>แบบเดิม 2026-08-27</span><span>ตรวจ 2026-09-10 · 21:58</span><span>aim @d42f27a</span><span>KSK-Decepticons @a3f5d28</span></div>
+  <h1>AI Manager — แผนวางไว้ยังไง สร้างจริงออกมาเป็นอะไร <span style="color:var(--ink-3);font-weight:500">· ฉบับตรวจจากเครื่องจริง</span></h1>
+  <p class="thesis">แผนคือ “ย้ายบ้านไปคลาวด์ แล้วให้ฝั่งเดิมอ่านอย่างเดียว” · ของจริงคือ <b>ฝั่งเดิมโตจนเป็นทั้งประตูหน้าและสมอง</b> ส่วนคลาวด์เป็นสำเนาที่ตอบคำถามได้ — วันนี้เจ้าของระบบ<b>รับสภาพนี้เป็นทางเดิน</b>: ปิดหนี้ที่รู้ · ไม่ย้ายสมอง · ไม่สร้างด่านหน้า (ตัวเลขบอกว่าไม่คุ้ม) · <b>GitHub เป็นจุดควบคุมเดียว</b> — ทั้งสองฝั่ง deploy เองแล้ว</p>
+  <div class="legend">
+    <div><b>✅</b> เซสชันนี้ยิงของจริง/เปิดไฟล์/อ่านฐานเองบน cim-server</div>
+    <div><b>📄</b> เชื่อตามใบตัดสิน คนอื่นวัด</div>
+    <div><b>❓</b> ยังไม่มีใครยืนยัน</div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">01 · ผังเทียบแบบ</div>
+  <h2>สี่ชั้นที่วางไว้ สร้างจริงได้สองชั้น — และวันนี้เพิ่มชั้นควบคุมเข้ามาหนึ่ง</h2>
+  <p class="lede">แบบเดิมให้คลาวด์เป็นประตูหน้า แล้วส่งงานหนักลง homelab ก่อนค่อยไปอ่าน cim-server · ของจริงกลับด้าน — LINE ลงที่เครื่อง PHP ก่อน แล้วเครื่องนั้นส่งต่อขึ้นคลาวด์ · <b>ใหม่วันนี้:</b> GitHub อยู่เหนือทั้งสองเครื่อง ใครแก้โค้ดต้องผ่านมัน</p>
+  <figure>
+    <div class="plates">
+      <div class="plate plan">
+        <div class="plate-hd"><h3>แบบที่วางไว้</h3><span class="when">IMPLEMENTATION_PLAN §2-เดิม</span></div>
+        <div class="flowbox"><b>LINE · ผู้ใช้ 12 คน</b></div>
+        <div class="arrow">webhook ↓</div>
+        <div class="flowbox"><span class="n">①</span><b>Cloudflare Workers</b>ประตูหน้า · รับ webhook ตอบใน ms · เข้าคิว · Cron = นาฬิกา · D1/KV</div>
+        <div class="arrow">ดึงคิวออกไปทำ ↓</div>
+        <div class="flowbox"><span class="n">②</span><b>homelab (เต้น้อย)</b>ชั้นสมอง · งานหนัก · เรียก LLM · วิเคราะห์รูป · ถือ token OA</div>
+        <div class="arrow">ขออ่าน (read-only) ↓</div>
+        <div class="flowbox"><span class="n">③</span><b>cim-server</b>ชั้นความจริงเดิม · อ่านอย่างเดียว ห้ามเขียน</div>
+        <div class="flowbox"><span class="n">④</span><b>GitHub + Notion</b>เก็บโค้ด + deploy · Notion = จอให้พี่เต้แก้กฎ</div>
+      </div>
+      <div class="plate built">
+        <div class="plate-hd"><h3>ของจริงที่รันอยู่</h3><span class="when">✅ ตรวจจากซอร์ส + ยิง production</span></div>
+        <div class="flowbox"><span class="n">④'</span><b>GitHub = จุดควบคุมเดียว (D-2026-09-10-ข)</b>KSK-Decepticons (ส่วนตัว) · aimanager (สาธารณะ) · “ยังไม่อยู่บน main = ยังไม่เสร็จ”</div>
+        <div class="arrow hot">ksk-git-pull ดึงทุก 1 นาที ↓ &nbsp;&nbsp;&nbsp; Workers Builds deploy ทุก push ↓</div>
+        <div class="flowbox"><b>LINE · ผู้ใช้ 12 คน</b></div>
+        <div class="arrow hot">webhook ↓ (ไม่ผ่านคลาวด์)</div>
+        <div class="flowbox"><span class="n">③→①②</span><b>vendor-ksk (PHP) บน cim-server</b>ประตูหน้า + สมอง (6 ชั้นตอบ · เรียก LLM เอง) + เจ้าของความจริง · tbl_task = ความจริงของ “งาน” (D-P0-18) · webhook spool ตอบ 200 ใน ~100 ms</div>
+        <div class="arrow hot">forward ดิบ /ingest/line ↓ &nbsp; /sync/tasks ทุก 10 นาที ↓ &nbsp; ↑ aim_notify → LINE push</div>
+        <div class="flowbox"><span class="n">①</span><b>Cloudflare Worker · aim-ingest</b>สำเนาปลายทาง · 20 intent ตอบด้วย SQL ล้วน <b style="display:inline">ไม่มี LLM</b> · cron 1 นาที · D1 (KV ไม่ได้ใช้) · <b style="display:inline">ไม่มี LINE token</b> ทุกข้อความออกต้องผ่าน cim-server</div>
+        <div class="flowbox ghost"><span class="n">②</span><b>homelab — ชั้นสมอง</b>เหลือ: คลังไฟล์รูป (D-009) · สรุปแชตรายวัน/monitor สำหรับ DSR · ทะเบียนชื่อ · heartbeat</div>
+        <div class="flowbox ghost"><b>Notion — จอแก้กฎ</b>ไม่เคยถูกใช้</div>
+      </div>
+    </div>
+    <figcaption>✅ <code>worker/src/types.ts:1-13</code> ไม่มี LINE token · <code>worker/src/outbound.ts:28-42</code> ขาออกทุกเส้นวิ่งไป <code>AIM_NOTIFY_URL</code> = cim-server · grep <code>anthropic|openai|gemini</code> ใน <code>worker/src</code> = 0 · <code>api/line_webhook.php:111</code> เรียก <code>aim_forward_events()</code> · task <code>ksk-git-pull</code> ดึง <code>41c9f8e → a3f5d28</code> เองภายใน 1 นาที (log 20:44:14) · Workers Builds: push 21:56:39 → success 21:57:37 → <code>GET /healthz</code> ตอบ <code>version = e96ab66d967c</code> = HEAD</figcaption>
+  </figure>
+
+  <div class="callout">
+    <h3>ข้อเท็จจริงที่เปลี่ยนวิธีคิดทั้งแผน</h3>
+    <div class="flow"><b>แบบวาด :</b>  LINE → Worker ① → คิว → homelab ② → อ่าน cim ③
+<b>ของจริง :</b>  LINE → <span class="hot">vendor-ksk PHP</span> → aim_forward_events() → Worker ① → <span class="hot">กลับมาออกทาง vendor-ksk</span> → LINE</div>
+    <p>Worker พูดกับ LINE เองไม่ได้ ⇒ <b>cim-server ล่ม = คลาวด์ใบ้ทันที</b> · การย้ายตรรกะขึ้นคลาวด์ทีละชิ้นจึงไม่แก้จุดตายจุดเดียว — นี่คือเหตุผลที่แผน “ย้ายสมอง 5 ชิ้น” ถูกตัดทิ้งวันนี้ และเหตุผลที่วัด downtime ก่อนจะสร้างอะไรเพิ่ม</p>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">02 · ตัวเลขจริง</div>
+  <h2>วัดจากเครื่องก่อนตัดสินใจ — ไม่ใช่จากเอกสาร</h2>
+  <div class="nums">
+    <div class="num ok"><div class="v">0 ชม./เดือน</div><div class="k">downtime ของ webhook ที่พิสูจน์ได้ (30 และ 60 วัน · probe ทุก 15 นาที 2,923 จุด · ไม่มี 5xx · ไม่มี reboot ตั้งแต่ 14 มิ.ย.) ⇒ ด่านหน้า store-and-forward <b>ไม่คุ้ม</b></div></div>
+    <div class="num ok"><div class="v">12 วันติด</div><div class="k">reconcile tbl_task ↔ D1 ตรงกัน 100% (30 ส.ค.–10 ก.ย.) · 31 ใบ · ประตู P4 ผ่าน · ตัวนับสตรีคที่เคยรายงาน 0 ตอนกดก่อน 23:30 แก้แล้ว</div></div>
+    <div class="num plan"><div class="v">126 / 14 วัน</div><div class="k">คำถามที่ไปถึงคลาวด์ (ชั้น local ตอบเองที่เหลือ) · ตัวกินโควตาจริงคือ cron 1,440/วัน ไม่ใช่ผู้ใช้</div></div>
+    <div class="num plan"><div class="v">35 วินาที</div><div class="k">push → Workers Builds success (build แรก b8b0f39) · ฝั่ง PHP ดึงเองใน ≤ 1 นาที</div></div>
+    <div class="num bad"><div class="v">3 แถว · 29 ส.ค.</div><div class="k">tbl_escalation — บันไดเตือน P3 เคยเดิน 1 รอบแล้วหยุด เพราะไม่มี scheduled task เรียก task_escalate.php</div></div>
+    <div class="num plan"><div class="v">311 เทส</div><div class="k">Worker หลังคืนนี้ (จาก 285) · typecheck 0 · lint 0 · migration check ผ่าน · ผู้ตรวจอิสระ ไม่มี 🔴</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">03 · ทีละชั้น</div>
+  <h2>เกิดอะไรขึ้นกับแต่ละชั้น</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>ชั้นที่แผนวาง</th><th>ของจริงวันนี้</th></tr></thead>
+    <tbody>
+      <tr><td>① Cloudflare Workers<span class="sub">ประตูหน้า · คิว · Cron · D1/KV</span></td><td>✅ มีจริง aim-ingest + D1 aim-db + cron 1 นาที · 6 endpoint · <b>แต่ไม่ใช่ประตูหน้า</b> — เป็นสำเนา+เครื่องตอบ 20 intent แบบ SQL ล้วน · KV ไม่ได้ใช้ · <b>deploy เองทุก push ตั้งแต่ 21:16 คืนนี้</b> · /healthz บอก commit ที่รัน</td></tr>
+      <tr><td>② homelab (เต้น้อย)<span class="sub">ชั้นสมอง · LLM · รูป · token OA</span></td><td>❌ ไม่ได้เป็นสมอง — LLM ทั้งหมดเรียกจากฝั่ง PHP · เหลือ 4 บทบาท: คลังไฟล์รูป (D-009) · team_chat_day_summary/monitor สำหรับ DSR · ทะเบียนชื่อ · heartbeat (289 ครั้ง/3 วัน)</td></tr>
+      <tr><td>③ cim-server<span class="sub">ความจริงเดิม อ่านอย่างเดียว</span></td><td>🔀 กลายเป็น<b>สมอง + ประตูหน้า + เจ้าของความจริง</b> (vendor-ksk) · “อ่านอย่างเดียว” ยังจริงในความหมายเดียว: คลาวด์ไม่เคยเขียนกลับ · ✅ ตั้งแต่ 20:41 โฟลเดอร์ live ดึงจาก GitHub เอง — เลิกแก้ไฟล์ตรง ๆ</td></tr>
+      <tr><td>④ GitHub + Notion<span class="sub">เก็บโค้ด + จอแก้กฎ</span></td><td>✅ GitHub เป็น<b>จุดควบคุมเดียว</b> (D-2026-09-10-ข): 2 repo รวมเป็นสายเดียวแล้ว (เคยแตก 2 สาย เลขคำตัดสินชน 3 รอบ) · aimanager สาธารณะ · CI test ทุก push · ❌ Notion ไม่เคยใช้</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">04 · ประตู — ลำดับนี้ห้ามข้าม</div>
+  <h2>แผนตั้ง 6 ประตู · ปิดจริง 4 · ปิดแบบ “พร้อมแต่ยังไม่เปิดสวิตช์” 1 · เปลี่ยนความหมาย 1</h2>
+  <div class="gates">
+    <div class="gate done"><div class="code">P0</div><div class="what"><b>ท่อและกระดูก</b> — ประตูอ้าง homelab ที่ไม่เคยถูกสร้าง<span class="g">📄 พี่เต้ตัดสินให้ผ่านโดยไม่ทดสอบ (D-P0-25) · ✅ ใบปิด P0-4/5/6 เขียนแล้วคืนนี้: smoke_aim_forward 16/16 · scheduled() มีจริง · “ปิด cim-server” = เลิกพึ่งแอป CIM ไม่ใช่ปิดเครื่อง</span></div><span class="chip ok">ปิดตามคำตัดสิน</span></div>
+    <div class="gate done"><div class="code">P1</div><div class="what"><b>ประสาทสัมผัส</b> — เดินครบเส้นทาง · ยิงซ้ำ 3 ครั้งไม่เกิดงานซ้ำ<span class="g">📄 D-P0-12 พิสูจน์ด้วยปุ่มจริงบนมือถือ</span></div><span class="chip ok">ปิดจบ</span></div>
+    <div class="gate done"><div class="code">P2</div><div class="what"><b>สายตา + ปาก</b> — 20 คำถามไม่มีคำตอบแต่ง · ลูกน้องถามงานคนอื่นต้องไม่เห็น<span class="g">📄 D-P0-19 — 20/20 ยิง production จริง</span></div><span class="chip ok">ปิดจบ</span></div>
+    <div class="gate open"><div class="code">P3</div><div class="what"><b>ความคิดริเริ่ม</b> — 10 สถานการณ์ · ไม่เตือนซ้ำ · นับโควตา push<span class="g">✅ โค้ด+ยาม (smoke_escalation 32/32)+ตัวนับโควตา มีจริง · ✅ แต่ไม่มี task เรียก task_escalate.php · tbl_escalation 3 แถว ล่าสุด 29 ส.ค. · 📄 เจ้าของระบบเคาะ “พร้อมแต่ยังไม่เปิดสวิตช์” (D-2026-09-10-ค) เปิดเป็นงานแยกใบ</span></div><span class="chip warn">ปิดเฟส · สวิตช์ปิด</span></div>
+    <div class="gate done"><div class="code">P4</div><div class="what"><b>ทดสอบเต็มระบบ</b> — ตรงกัน 100% ติดกัน 7 วัน · โควตา push<span class="g">✅ 12 วันติด (30 ส.ค.–10 ก.ย.) · push ~1,103/เดือน = 7% ของ 15,000 · ตัวนับแยก “ไม่ตรง / ยังไม่ถึงรอบวัด / ยามไม่ได้รัน” แล้ว</span></div><span class="chip ok">ผ่านจริง</span></div>
+    <div class="gate blocked"><div class="code">P5</div><div class="what"><b>ย้ายของจริง แล้วค่อยตัดสายเดิม</b><span class="g">⛔ ยังไม่ย้ายสักระบบ — และ <b>เปลี่ยนความหมายวันนี้</b> (D-2026-09-10-ก): ไม่ย้ายสมอง (สารบัญคำถาม/LLM/ลงเวลา-ลา ไม่คุ้ม) · คง tbl_task ฝั่ง LIVE · ทางที่เหลือคือ mirror ตารางอ่านทีละตัว — ยังไม่ออกแบบโดยเจตนา · เครื่องมือวัด “ของเก่าหยุดจริง” (WP-P5-A) มีแล้ว</span></div><span class="chip bad">ความหมายใหม่ · ยังไม่เริ่ม</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">05 · ทำอะไรไปแล้ววันนี้</div>
+  <h2>2026-09-10 — จากบั๊กแนบรูปตอนเช้า ถึง GitHub-first ตอนดึก</h2>
+  <div class="timeline">
+    <div class="tl"><div class="t">09:53 → 18:10</div>คำสั่ง “ใส่ภาพนี้ในใบงาน #145” เงียบ — 3 รากซ้อน: แท็กบอทไม่ถูกจับ · เลขไม่มี # · <b>webhook ส่งตัวแปร $uid ที่ยังไม่มีค่า</b> (Warning ที่ไม่มีใครอ่าน) ⇒ แก้ครบ + ยาม 66 ข้อที่<b>ยิงผ่าน worker จริง</b> + ตอบเป็นการ์ดงาน · เปิดให้ทุกคนในกลุ่ม</div>
+    <div class="tl"><div class="t">เช้า–บ่าย</div>ทะเบียนคนอ่านจากฐานจริง (ไม่ใช่ไฟล์แช่แข็ง) · tbl_line_user ย้ายไป db_line · ยาม 19 ข้อ</div>
+    <div class="tl warn"><div class="t">19:xx</div>as-built จาก 3 เอเจนต์ + Fable 5.1 วิเคราะห์ความเสี่ยง — <b>ไม่เห็นด้วยกับบันได “ย้ายสมอง 5 ชิ้น”</b> เพราะ Worker พูดกับ LINE ไม่ได้ · เจ้าของระบบเลือกแนวทาง ก</div>
+    <div class="tl"><div class="t">20:00–20:30</div>person_link เกิดเองเมื่อคลาวด์ตอบ 403 (คนใหม่เคยโดน “บัญชียังไม่เปิด”) · ตัวนับสตรีค 3 สถานะ · วัด downtime = 0 · รวมสายเอกสาร 2 เครื่อง (เลข D-P0 ชน 3 รอบ → ใช้เลขวันที่) — KSK-Decepticons <code>26af4f5</code> · aim <code>7d6ccb8</code></div>
+    <div class="tl"><div class="t">20:41 · 20:44</div>task <code>ksk-git-pull</code> (Interactive เหมือน 6 task เดิม — แบบฝากรหัสไม่ผ่านบนเครื่องนี้) · พิสูจน์ดึง <code>41c9f8e → a3f5d28</code> เอง</div>
+    <div class="tl"><div class="t">21:05 · 21:16</div>Cloudflare Workers Builds ผูก repo (root / · npm ci · npm run db:migrate:remote && npm run deploy) · build แรก <code>b8b0f39</code> success 35 วิ · repo aim เป็นสาธารณะ — ตัด LINE id ออก 1 จุด</div>
+    <div class="tl"><div class="t">21:00–21:58</div>ทีม 8 เอเจนต์ (Opus 4 · Sonnet 4) + ผู้ตรวจอิสระ 1 + แก้ตาม 2 — <code>f84ff1c</code> /healthz version · กรอง cancelled 7 จุด · สถิติไม่มีข้อมูลตอบตรง ๆ · เทส endpoint จริง · <code>e96ab66</code> §2 as-built · ใบปิด P0/P3 · คำตัดสิน ค/ง/จ · <b>/healthz ตอบ e96ab66d967c = HEAD</b></div>
+    <div class="tl bad"><div class="t">ตัดสินว่าไม่ทำ</div>ด่านหน้า store-and-forward (ตัวเลข 0) · ลบใบทดสอบ L-9 (ลบแล้วสตริค P4 ขาด — ใช้ตัวกรองสถานะแทน) · ย้ายสารบัญ/LLM/ลงเวลา-ลา ขึ้นคลาวด์ · แก้ไทม์โซน php.ini (ของก่อน as-built — ยึดแผน)</div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">06 · ขอบเขตที่เลื่อนไปจากแบบ</div>
+  <h2>สิ่งที่แผนเขียนไว้แล้วไม่ตรงแล้ว — และคำตัดสินที่มาแทน</h2>
+  <div class="drift">
+    <div><b>“ย้ายสมองขึ้นคลาวด์” → ไม่ทำ</b><span>D-2026-09-10-ก: สมองอยู่ฝั่งที่ข้อมูลและสิทธิ์เขียนอยู่ · คลาวด์ไม่มี LLM (ไม่หลอน ไม่กินโควตา) · ความไวได้จาก spool ในบ้าน · ฟีดกลุ่มอยู่ฐานเรา — รับ 4 ข้อนี้เป็นมาตรฐาน</span></div>
+    <div><b>“ระบบไม่ตายตามเครื่องเดียว” → ปิดด้วยตัวเลข</b><span>D-2026-09-10-ง: downtime 0 ชม./เดือน · tunnel_watchdog วัดต่อ · เปิดใหม่ถ้าเห็นล่มช่วงเวลางานจริง</span></div>
+    <div><b>Codex เขียน · Claude ห้ามเขียน → ทีมเอเจนต์</b><span>Fable กำกับ · Opus งานที่ต้องตัดสินใจ · Sonnet งานสเปกครบ · ผู้ตรวจคนละตัวกับผู้เขียน · ยามต้องแดงได้ในสำเนา · ของออกนอกเครื่องเจ้าของระบบกดเอง</span></div>
+    <div><b>deploy สั่งมือ → GitHub-first</b><span>D-2026-09-10-ข: push main = live (PHP 1 นาที · Worker 1 นาที) · หย่อน branch protection ชั่วคราวตามสั่ง · ปิดทีหลัง 2 คลิก</span></div>
+    <div><b>เลข D-P0-xx → D-YYYY-MM-DD-ก</b><span>ชนกัน 3 รอบเมื่อสองสายเขียนพร้อมกัน · สาย GitHub ชนะ · ตารางแปลงอยู่หัว DECISIONS_P0.md (local 17→18 · 18→19 · 19→D-2026-08-29-ก · 21→D-2026-09-03-ก)</span></div>
+    <div><b>PII ระหว่างทาง → ไม่ปอก (เจ้าของระบบ)</b><span>ของที่เก็บบน D1 ยังเป็น metadata ล้วน (extractMetadata) · ไม่เก็บข้อความดิบจนกว่ามีงานที่ใช้จริง · DATA_POLICY 3 ข้อค้างเลื่อนถึง 2026-10-15</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">07 · เหลืออะไร</div>
+  <h2>ตามนิยาม “จบ” 6 ข้อ — ผ่านทั้ง 6 · ส่งมอบยังไม่เกิด</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>งาน</th><th>สถานะ</th></tr></thead>
+    <tbody>
+      <tr><td>C.1 ตาราง “ประตูที่ผ่านจริง” รวมในไฟล์เดียว</td><td>พรุ่งนี้ · S</td></tr>
+      <tr><td>C.5 เจ้าของระบบรัน checklist ปิดโปรเจกต์ด้วยตัวเอง</td><td>พรุ่งนี้ · 15 นาที · <b>ต้องเป็นมือเจ้าของระบบ</b> ถึงเรียกว่าส่งมอบ</td></tr>
+      <tr><td>เปิดสวิตช์ P3 (task เรียก task_escalate.php)</td><td>งานแยกใบ · ขออนุมัติใหม่ตอนนั้น</td></tr>
+      <tr><td>ขั้นที่ 3 mirror ตารางอ่านทีละตัว (ผู้สมัครแรก tbl_site_activity)</td><td>ยังไม่ออกแบบโดยเจตนา — หลังปิดโปรเจกต์นี้</td></tr>
+      <tr><td>branch protection ทั้งสอง repo</td><td>เมื่อเจ้าของระบบพร้อม · 2 คลิก</td></tr>
+      <tr><td>outbound_queue · sync_state ไม่มีโค้ดใช้</td><td>จดแล้ว · ลบ migration รอบหน้าตามกติกา P5</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<div class="bottom">
+  <div class="two">
+    <div class="quote a"><div class="k">แผน 2026-08-27</div><p>ย้ายบ้านไปคลาวด์ แล้วให้ฝั่งเดิมอ่านอย่างเดียว</p></div>
+    <div class="quote b"><div class="k">ของจริง 2026-09-10 21:58</div><p>ฝั่งเดิมเป็นทั้งประตูหน้าและสมอง คลาวด์เป็นสำเนาที่ตอบคำถามได้ — และตั้งแต่คืนนี้ทั้งสองฝั่งอยู่ใต้ GitHub ตัวเดียว deploy เองทั้งคู่</p></div>
+  </div>
+  <p class="verdict">ความสามารถเดินไปไกลกว่าแผน — P1 / P2 / P4 ปิดจริงมีหลักฐาน มีของที่แผนไม่เคยสั่งอีกเพียบ · การ “ย้ายบ้าน” ที่เป็นหัวใจของแผนเดิม<b>ถูกตัดสินวันนี้ว่าไม่ใช่ทางที่คุ้ม</b> โดยมีตัวเลขกำกับ ไม่ใช่ความรู้สึก · เส้นชัยใหม่คือนิยาม “จบ” 6 ข้อ ซึ่งผ่านครบแล้ว — <b>เหลือแค่เจ้าของระบบกด checklist ส่งมอบด้วยมือตัวเอง</b></p>
+</div>
+
+<footer>
+  ที่มา: aim/docs/AS_BUILT.md · PROJECT_CLOSEOUT_PLAN.md · DECISIONS_P0.md (D-P0-01..29 + D-2026-08-29-ก … D-2026-09-10-จ) · IMPLEMENTATION_PLAN.md §2 (as-built) / §2-เดิม<br>
+  ตรวจฝั่ง LIVE บน HKServer-CIMS จริง (ยิง production · อ่าน MySQL · Task Scheduler · IIS log) · ฝั่งคลาวด์ที่ mottosolar-gif-aimanager @d42f27a · เปรียบเทียบกับหน้า as-built ฉบับ 2026-09-09 ของเซสชันคลาวด์ที่ยิง production ไม่ได้<br>
+  ✅ /healthz ณ 21:57:37 ตอบ ok · version e96ab66d967c · queueDepth 0 · deadJobs 0 · strandedEvents 0
+</footer>
+
+</div>
+</body>
+</html>
