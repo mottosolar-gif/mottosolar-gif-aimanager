@@ -10,8 +10,6 @@ dist/
 *.env
 .env
 .env.*
-wrangler.toml
-**/wrangler.toml
 
 # Database exports can contain operational data.
 dumps/
