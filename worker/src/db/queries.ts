@@ -223,6 +223,9 @@ export function queryMyLatestAssignedTask(
      JOIN task_event te ON te.task_ref = t.task_ref
      WHERE t.assignee_person_code = ?
        AND te.new_status = 'assigned'
+       -- "งานล่าสุดที่ได้รับมอบหมาย" ต้องเป็นงานที่ยังต้องทำ: งานที่ถูกยกเลิกไปแล้ว
+       -- ไม่ใช่งานที่มอบหมายให้พี่อยู่ ⇒ ตัดออก (D-P0-21 หนี้ข้อ 2)
+       AND t.status <> 'cancelled'
      GROUP BY t.task_ref, t.title, t.status, t.assignee_person_code,
               t.created_at, t.scheduled_at, t.due_at,
               t.accepted_at, t.completed_at
@@ -330,8 +333,13 @@ export async function queryTeamTodayCounts(
       return all<TeamTodayCountQueryRow>(
         db,
         `SELECT
-           SUM(CASE WHEN t.created_at >= ? AND t.created_at < ? THEN 1 ELSE 0 END) AS new_count,
-           SUM(CASE WHEN t.completed_at >= ? AND t.completed_at < ? THEN 1 ELSE 0 END) AS completed_count,
+           -- "งานใหม่วันนี้" = งานที่เข้ามาแล้วยังมีอยู่จริง ⇒ ใบที่ถูกยกเลิกแล้วไม่นับ (D-P0-21 หนี้ข้อ 2)
+           SUM(CASE WHEN t.created_at >= ? AND t.created_at < ?
+                      AND t.status <> 'cancelled' THEN 1 ELSE 0 END) AS new_count,
+           -- "งานเสร็จวันนี้" ต้องเป็นงานที่เสร็จแล้วยังนับเป็นงานเสร็จจริง ⇒ ใบที่ภายหลังถูก
+           -- ยกเลิก (LIVE ส่ง completed_at/status แยกกันผ่าน POST /sync/tasks) ไม่นับ (D-P0-21 หนี้ข้อ 2)
+           SUM(CASE WHEN t.completed_at >= ? AND t.completed_at < ?
+                      AND t.status <> 'cancelled' THEN 1 ELSE 0 END) AS completed_count,
            SUM(CASE
              WHEN t.assignee_person_code IS NOT NULL
                AND t.status IN (${openStatuses}) THEN 1 ELSE 0
@@ -451,6 +459,9 @@ export async function queryRejectedMonthCandidates(
         `SELECT t.assignee_person_code, COUNT(*) AS task_count
          FROM task t
          WHERE t.assignee_person_code IN (${scope.placeholders})
+           -- นับ "งานที่ถูกปฏิเสธเดือนนี้" จากเหตุการณ์ปฏิเสธจริง แต่ใบที่ถูกยกเลิกไปแล้ว
+           -- ไม่ควรพองสถิติการปฏิเสธ (เจตนาของคำถามคือปฏิเสธ ไม่ใช่ยกเลิก · D-P0-21 หนี้ข้อ 2)
+           AND t.status <> 'cancelled'
            AND EXISTS (
              SELECT 1
              FROM task_event te
@@ -554,6 +565,9 @@ export async function queryAcceptTimeCandidates(
          WHERE t.accepted_at IS NOT NULL
            AND t.accepted_at >= ?
            AND t.accepted_at < ?
+           -- "ใครรับงานเร็วที่สุด" วัดจากงานที่รับแล้วยังเป็นงานอยู่จริง ⇒ ใบที่ถูกยกเลิกไม่เข้าอันดับ
+           -- (D-P0-21 หนี้ข้อ 2 — วันที่ accepted_at เริ่มมีค่า ใบยกเลิกจะไหลเข้าสถิติทันที)
+           AND t.status <> 'cancelled'
            AND t.assignee_person_code IN (${scope.placeholders})
          GROUP BY t.assignee_person_code
          ORDER BY t.assignee_person_code`,
@@ -585,6 +599,9 @@ export async function queryNewTodayCandidates(
          WHERE (t.assignee_person_code IN (${scope.placeholders})${unassignedScope})
            AND t.created_at >= ?
            AND t.created_at < ?
+           -- คู่แฝดของ new_count ข้างบน: "วันนี้มีงานใหม่กี่ใบ" ต้องไม่นับใบที่ถูกยกเลิกแล้ว
+           -- (แก้ที่ชนิดของบั๊ก ไม่ใช่เฉพาะจุดที่ถูกชี้ · D-P0-21 หนี้ข้อ 2 บรรทัด 584)
+           AND t.status <> 'cancelled'
          GROUP BY t.assignee_person_code
          ORDER BY t.assignee_person_code`,
         ...scope.bindings,
@@ -594,6 +611,46 @@ export async function queryNewTodayCandidates(
     }),
   );
   return chunks.flat();
+}
+
+export interface TimingDataPresence {
+  acceptedTaskCount: number;
+  cycleTaskCount: number;
+}
+
+interface TimingDataPresenceRow {
+  accepted_task_count: number | null;
+  cycle_task_count: number | null;
+}
+
+/**
+ * มีข้อมูลเวลาให้คำนวณจริงหรือยัง — ถามทั้งฐาน ไม่ใช่แค่เดือนนี้/ขอบเขตของผู้ถาม
+ * เพราะคำถามที่ต้องตอบคือ "ระบบยังไม่มีข้อมูลเวลาเลย" ไม่ใช่ "เดือนนี้ไม่มี"
+ * (งานจริงเข้ามาทาง POST /sync/tasks ซึ่งไม่เขียน accepted_at และ applyTransition
+ * ปฏิเสธ ref ที่ขึ้นต้น L- ⇒ task_event/accepted_at ว่างทั้งฐานมาตลอด)
+ * คืนเป็นตัวนับระดับระบบล้วน ไม่มีคอลัมน์ที่ชี้ตัวคนหรือใบงาน ⇒ ไม่ใช่ช่องข้ามด่าน canView()
+ * ห้ามเอาตัวเลขนี้ไปแสดงให้ผู้ใช้ ใช้ได้แค่เป็น "มี/ไม่มี"
+ */
+export async function queryTimingDataPresence(
+  db: D1Database,
+): Promise<TimingDataPresence> {
+  const rows = await all<TimingDataPresenceRow>(
+    db,
+    `SELECT
+       SUM(CASE
+         WHEN t.accepted_at IS NOT NULL AND t.status <> 'cancelled' THEN 1 ELSE 0
+       END) AS accepted_task_count,
+       SUM(CASE
+         WHEN t.accepted_at IS NOT NULL AND t.completed_at IS NOT NULL
+           AND t.status <> 'cancelled' THEN 1 ELSE 0
+       END) AS cycle_task_count
+     FROM task t`,
+  );
+  const row = rows[0];
+  return {
+    acceptedTaskCount: Number(row?.accepted_task_count ?? 0),
+    cycleTaskCount: Number(row?.cycle_task_count ?? 0),
+  };
 }
 
 interface LatestInboxRow {

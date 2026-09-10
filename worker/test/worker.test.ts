@@ -530,6 +530,44 @@ describe("aim-ingest Worker", () => {
     expect(body.ts).toEqual(expect.any(String));
   });
 
+  // ★ 2026-09-10 — Workers Builds deploy เองทุก push ⇒ ต้องดูจากนอกได้ว่า production รัน commit ไหน
+  it("บอก commit ที่ deploy อยู่ผ่าน /healthz ทางปกติ", async () => {
+    const database = new MemoryD1();
+    const env = makeEnv(database);
+
+    const response = await handleRequest(new Request("https://aim.example/healthz"), env);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    // ในรีโปเป็น "dev" · ตอน deploy จริง worker/scripts/write-version.mjs เขียนทับเป็น sha 12 ตัว
+    expect(typeof body.version).toBe("string");
+    expect(body.version).not.toBe("");
+    expect(typeof body.builtAt).toBe("string");
+  });
+
+  it("ยังบอก commit ได้ตอนอ่าน D1 ไม่ได้ (503 ต้องมี version เหมือนทางปกติ)", async () => {
+    // ค่านี้ไม่ได้มาจากฐาน ⇒ ตอนฐานล่มคือตอนที่ต้องรู้ให้ได้ว่า "commit ไหนกำลังล่ม"
+    const brokenDatabase = {
+      prepare(): D1PreparedStatement {
+        throw new Error("D1 binding is missing");
+      },
+      batch(): Promise<D1Result[]> {
+        throw new Error("D1 binding is missing");
+      },
+    } as unknown as D1Database;
+    const env: Env = { ...makeEnv(new MemoryD1()), DB: brokenDatabase };
+
+    const response = await handleRequest(new Request("https://aim.example/healthz"), env);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.queueDepth).toBeNull();
+    expect(typeof body.version).toBe("string");
+    expect(body.version).not.toBe("");
+    expect(typeof body.builtAt).toBe("string");
+  });
+
   it("counts a pending inbox row as stranded when its ISO received_at is older than 15 minutes", async () => {
     // MemoryD1 cannot prove this. It compared ISO to ISO in JavaScript, so the
     // healthz mock stayed green while production SQLite compared toISOString()

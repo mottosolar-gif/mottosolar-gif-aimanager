@@ -18,11 +18,13 @@ import {
   queryTeamTodayCounts,
   queryTeamUnacceptedTasks,
   queryTeamUnassignedTasks,
+  queryTimingDataPresence,
   type AssignedTaskQueryRow,
   type CountedTaskQueryRow,
   type PersonDurationAggregateQueryRow,
   type PersonTaskCountQueryRow,
   type TaskQueryRow,
+  type TimingDataPresence,
 } from "./db/queries.ts";
 import {
   canAskTeamQuestion,
@@ -723,9 +725,14 @@ async function answerIntent(
           ? ` โดยข้ามข้อมูลเวลาที่อ่านไม่ได้ ${skippedCount} งาน กรุณาตรวจเวลารับและเวลาเสร็จของงานเหล่านั้น`
           : "";
       if (taskCount === 0) {
+        // บอกความจริงให้ตรงชั้น: ถ้าทั้งระบบยังไม่เคยมีเวลารับ/เวลาเสร็จเลย ปัญหาไม่ใช่ "เดือนนี้ว่าง"
+        // แต่คือระบบยังไม่มีข้อมูลเวลา ⇒ ห้ามตอบให้ดูเหมือนสถิติที่คำนวณแล้ว
+        const timing = await queryTimingDataPresence(db);
         return matchedAnswer(
           intent,
-          `น้องกุ้งยังคำนวณเวลาเฉลี่ยไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีทั้งเวลารับและเวลาเสร็จที่อ่านได้ในขอบเขตที่พี่ดูได้${skippedText}ค่ะ`,
+          timing.cycleTaskCount === 0
+            ? `น้องกุ้งขอบอกตามตรงว่าตอนนี้ระบบยังไม่มีข้อมูลเวลารับงานและเวลาเสร็จงานเลยสักใบ จึงยังคำนวณเวลาเฉลี่ยให้พี่ไม่ได้ ต้องรอให้มีการกดรับงานและปิดงานผ่านระบบก่อน${skippedText}ค่ะ`
+            : `น้องกุ้งยังคำนวณเวลาเฉลี่ยไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีทั้งเวลารับและเวลาเสร็จที่อ่านได้ในขอบเขตที่พี่ดูได้${skippedText}ค่ะ`,
         );
       }
       const totalMilliseconds = rows.reduce(
@@ -758,9 +765,13 @@ async function answerIntent(
           : "";
       const fastest = fastestAverageAccept(rows);
       if (!fastest) {
+        // เหมือน stats_avg_cycle: ไม่มีเวลารับงานทั้งฐาน = ไม่มีข้อมูลให้จัดอันดับ ไม่ใช่ "เดือนนี้ว่าง"
+        const timing = await queryTimingDataPresence(db);
         return matchedAnswer(
           intent,
-          `น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีเวลาสร้างและเวลารับที่อ่านได้ในขอบเขตที่พี่ดูได้${skippedText}ค่ะ`,
+          timing.acceptedTaskCount === 0
+            ? `น้องกุ้งขอบอกตามตรงว่าตอนนี้ระบบยังไม่มีข้อมูลเวลารับงานเลยสักใบ จึงยังจัดอันดับคนที่รับงานเร็วที่สุดให้ไม่ได้ ต้องรอให้มีการกดรับงานผ่านระบบก่อน${skippedText}ค่ะ`
+            : `น้องกุ้งยังหาคนที่รับงานเร็วที่สุดไม่ได้ เพราะเดือนนี้ไม่มีงานที่มีเวลาสร้างและเวลารับที่อ่านได้ในขอบเขตที่พี่ดูได้${skippedText}ค่ะ`,
         );
       }
       const averageDuration = durationText(fastest.averageMilliseconds);
@@ -796,7 +807,7 @@ async function answerIntent(
       );
     }
     case "help":
-      return matchedAnswer(intent, helpText());
+      return matchedAnswer(intent, helpText(await queryTimingDataPresence(db)));
     case "system_status": {
       const status = await querySystemStatus(db);
       if (!status.latestInboxAt && !status.latestCronAt) {
@@ -1128,12 +1139,20 @@ function fastestAverageAccept(
 }
 
 
-function helpText(): string {
+/**
+ * เมนูต้องไม่โฆษณาคำถามที่ยังไม่มีข้อมูลรองรับ — คำถามสถิติที่คิดจากเวลารับ/เวลาเสร็จ
+ * จะถูกติดป้ายว่ายังไม่มีข้อมูล จนกว่าจะมีเวลาจริงในฐาน (ยังตอบได้ แต่ไม่หลอกว่าพร้อมใช้)
+ */
+function helpText(timing: TimingDataPresence): string {
   const lines = [...intentDefinitions]
     .sort((left, right) => left.menuOrder - right.menuOrder)
-    .map(
-      (definition) =>
-        `${definition.menuOrder}. พิมพ์ว่า \"${definition.menuText}\" ได้`,
-    );
+    .map((definition) => {
+      const unavailable =
+        (definition.timestampAggregate === "cycle" && timing.cycleTaskCount === 0) ||
+        (definition.timestampAggregate === "accept" &&
+          timing.acceptedTaskCount === 0);
+      const note = unavailable ? " (ยังไม่มีข้อมูล)" : "";
+      return `${definition.menuOrder}. พิมพ์ว่า \"${definition.menuText}\" ได้${note}`;
+    });
   return `${lines.join("\n")}\nน้องกุ้งตอบคำถามที่ลงทะเบียนไว้ตามรายการนี้ค่ะ`;
 }

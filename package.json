@@ -12,7 +12,7 @@
     "db:migration:check": "node schema/check-migration.mjs",
     "db:migrate:local": "wrangler d1 migrations apply aim-db --local --config worker/wrangler.local.toml",
     "db:migrate:remote": "wrangler d1 migrations apply aim-db --remote --config worker/wrangler.toml",
-    "deploy": "wrangler deploy --config worker/wrangler.toml",
+    "deploy": "node worker/scripts/write-version.mjs && wrangler deploy --config worker/wrangler.toml",
     "dev": "wrangler dev --config worker/wrangler.local.toml",
     "lint": "eslint .",
     "test": "vitest run",

@@ -1127,7 +1127,20 @@ describe("answers from real SQLite queries", () => {
           expect(scopedBeforeLimit, `${registered.id}: ${sql}`).toBe(true);
         }
 
-        if (taskSql.length > 0) {
+        // help อ่านตาราง task ได้ทางเดียวเท่านั้น: ตัวนับระดับระบบว่า "มีข้อมูลเวลาไหม"
+        // (ไว้ติดป้าย "ยังไม่มีข้อมูล" ในเมนู) ⇒ ไม่มีแถวให้ scope และไม่มีตัวเลขให้รายงาน
+        // แต่ต้องพิสูจน์ว่ามันแตะคอลัมน์ที่ชี้ตัวคน/ใบงานไม่ได้ ไม่ใช่ยกเว้นให้เฉย ๆ
+        const systemLevelProbeOnly = registered.id === "help";
+        if (systemLevelProbeOnly) {
+          for (const sql of taskSql) {
+            expect(
+              /task_ref|\btitle\b|assignee_person_code/i.test(sql),
+              `${registered.id}: ${sql}`,
+            ).toBe(false);
+          }
+        }
+
+        if (taskSql.length > 0 && !systemLevelProbeOnly) {
           expect(answer.text, registered.id).not.toMatch(
             /(?:ตรวจแล้ว ไม่มีงาน|เพราะไม่มีงาน|ยังไม่มีงาน|ไม่พบงาน)/,
           );
@@ -1818,6 +1831,356 @@ async function insertEvent(
     .bind(taskRef, newStatus, occurredAt)
     .run();
 }
+
+// D-P0-21 หนี้ข้อ 2 — ใบที่ถูกยกเลิก (เช่น L-9 ที่ถูก cancel ตั้งแต่ 20 ส.ค.) ต้องไม่ไหลเข้า
+// คำถามที่ไม่ได้ถามเรื่องการยกเลิก · ทุกเคสเลี้ยงทั้ง "ใบเป็น" และ "ใบยกเลิก" คู่กันเสมอ
+// เพื่อให้เห็นความต่างของตัวเลข ไม่ใช่แค่เห็นศูนย์
+describe("งานที่ถูกยกเลิกต้องไม่ถูกนับ", () => {
+  it("my_latest_assigned: ข้ามใบที่ถูกยกเลิกแม้จะเป็นใบที่มอบหมายทีหลัง", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-CANCEL-W", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-CANCEL-LIVE",
+        title: "งานที่ยังอยู่",
+        status: "assigned",
+        assignee: "P-CANCEL-W",
+        createdAt: "2026-08-27T06:00:00.000Z",
+      });
+      await insertTask(db, {
+        ref: "T-CANCEL-DEAD",
+        title: "งานที่ถูกยกเลิก",
+        status: "cancelled",
+        assignee: "P-CANCEL-W",
+        createdAt: "2026-08-27T07:00:00.000Z",
+      });
+      await insertEvent(db, "T-CANCEL-LIVE", "assigned", "2026-08-27T06:30:00.000Z");
+      // ใบยกเลิกถูกมอบหมายทีหลัง ⇒ ถ้าไม่มีตัวกรอง มันจะชนะการเรียงลำดับเสมอ
+      await insertEvent(db, "T-CANCEL-DEAD", "assigned", "2026-08-27T07:30:00.000Z");
+
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-CANCEL-W",
+        "งานล่าสุดที่ได้รับมอบหมาย",
+        now,
+      );
+
+      expect(answer.text).toContain("T-CANCEL-LIVE");
+      expect(answer.text).not.toContain("T-CANCEL-DEAD");
+      expect(answer.text).toContain("27 ส.ค. 2569 13:30 น.");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("my_latest_assigned: มีแต่ใบที่ถูกยกเลิก = ไม่มีประวัติ ไม่ใช่ตอบใบที่ตายแล้ว", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-CANCEL-ONLY", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-CANCEL-ONLY",
+        title: "งานที่ถูกยกเลิกใบเดียว",
+        status: "cancelled",
+        assignee: "P-CANCEL-ONLY",
+        createdAt: "2026-08-27T06:00:00.000Z",
+      });
+      await insertEvent(db, "T-CANCEL-ONLY", "assigned", "2026-08-27T06:30:00.000Z");
+
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-CANCEL-ONLY",
+        "งานล่าสุดที่ได้รับมอบหมาย",
+        now,
+      );
+
+      expect(answer.text).toBe(
+        "น้องกุ้งตรวจแล้ว ยังไม่มีประวัติงานที่มอบหมายให้พี่ค่ะ",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("งานใหม่วันนี้ทั้งสองจุด (team_today · stats_new_today) ไม่นับใบที่ถูกยกเลิก", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-NEW-M", "operations", "manager");
+      await insertPerson(db, "P-NEW-W", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-NEW-LIVE",
+        title: "งานใหม่ที่ยังอยู่",
+        status: "assigned",
+        assignee: "P-NEW-W",
+        createdAt: "2026-08-27T02:00:00.000Z",
+      });
+      await insertTask(db, {
+        ref: "T-NEW-CANCELLED",
+        title: "งานใหม่ที่ถูกยกเลิกแล้ว",
+        status: "cancelled",
+        assignee: "P-NEW-W",
+        createdAt: "2026-08-27T03:00:00.000Z",
+      });
+
+      const team = await askQuestion(
+        db.asD1(),
+        "P-NEW-M",
+        "สรุปงานวันนี้ทั้งทีม",
+        now,
+      );
+      const stats = await askQuestion(
+        db.asD1(),
+        "P-NEW-M",
+        "วันนี้มีงานใหม่กี่ใบ",
+        now,
+      );
+
+      expect(team.text).toContain("งานใหม่วันนี้ 1 งาน");
+      expect(team.text).not.toContain("งานใหม่วันนี้ 2 งาน");
+      expect(stats.text).toContain("วันนี้มีงานใหม่ 1 งาน");
+      expect(stats.text).not.toContain("วันนี้มีงานใหม่ 2 งาน");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("team_today: งานเสร็จวันนี้ไม่นับใบที่เสร็จแล้วภายหลังถูกยกเลิก", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-DONE-M", "operations", "manager");
+      await insertPerson(db, "P-DONE-W", "operations", "worker");
+      // LIVE ส่ง completed_at/status แยกกันผ่าน POST /sync/tasks ไม่ผ่าน taskMachine.ts
+      // ⇒ ใบนี้จำลองงานที่ถูกทำเครื่องหมายเสร็จแล้วภายหลังถูกยกเลิกบน LIVE
+      await insertTask(db, {
+        ref: "T-DONE-LIVE",
+        title: "งานที่เสร็จจริงวันนี้",
+        status: "completed",
+        assignee: "P-DONE-W",
+        createdAt: "2026-08-27T02:00:00.000Z",
+        acceptedAt: "2026-08-27T02:10:00.000Z",
+        completedAt: "2026-08-27T03:00:00.000Z",
+      });
+      await insertTask(db, {
+        ref: "T-DONE-CANCELLED",
+        title: "งานที่เสร็จแล้วแต่ถูกยกเลิกทีหลัง",
+        status: "cancelled",
+        assignee: "P-DONE-W",
+        createdAt: "2026-08-27T02:00:00.000Z",
+        acceptedAt: "2026-08-27T02:10:00.000Z",
+        completedAt: "2026-08-27T03:30:00.000Z",
+      });
+
+      const team = await askQuestion(
+        db.asD1(),
+        "P-DONE-M",
+        "สรุปงานวันนี้ทั้งทีม",
+        now,
+      );
+
+      expect(team.text).toContain("งานเสร็จวันนี้ 1 งาน");
+      expect(team.text).not.toContain("งานเสร็จวันนี้ 2 งาน");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stats_rejected_month: เหตุการณ์ปฏิเสธของใบที่ถูกยกเลิกไม่พองสถิติ", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-REJ-O", "management", "owner");
+      await insertPerson(db, "P-REJ-W", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-REJ-LIVE",
+        title: "งานที่ถูกปฏิเสธจริง",
+        status: "rejected",
+        assignee: "P-REJ-W",
+        createdAt: "2026-08-05T00:00:00.000Z",
+      });
+      await insertEvent(db, "T-REJ-LIVE", "rejected", "2026-08-05T01:00:00.000Z");
+      await insertTask(db, {
+        ref: "T-REJ-CANCELLED",
+        title: "งานที่ถูกปฏิเสธแล้วถูกยกเลิกทิ้ง",
+        status: "cancelled",
+        assignee: "P-REJ-W",
+        createdAt: "2026-08-06T00:00:00.000Z",
+      });
+      await insertEvent(db, "T-REJ-CANCELLED", "rejected", "2026-08-06T01:00:00.000Z");
+
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-REJ-O",
+        "งานถูกปฏิเสธกี่ใบเดือนนี้",
+        now,
+      );
+
+      expect(answer.text).toContain("มีงานถูกปฏิเสธ 1 งาน");
+      expect(answer.text).not.toContain("มีงานถูกปฏิเสธ 2 งาน");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stats_fastest_accept: ใบที่ถูกยกเลิกชิงที่หนึ่งไม่ได้แม้เวลารับจะเร็วกว่า", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-ACC-O", "management", "owner");
+      await insertPerson(db, "P-ACC-SLOW", "operations", "worker");
+      await insertPerson(db, "P-ACC-GHOST", "operations", "worker");
+      await insertTask(db, {
+        ref: "T-ACC-LIVE",
+        title: "งานที่รับแล้วและยังอยู่",
+        status: "accepted",
+        assignee: "P-ACC-SLOW",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        acceptedAt: "2026-08-20T00:30:00.000Z",
+      });
+      await insertTask(db, {
+        ref: "T-ACC-CANCELLED",
+        title: "งานที่รับไวแล้วถูกยกเลิก",
+        status: "cancelled",
+        assignee: "P-ACC-GHOST",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        acceptedAt: "2026-08-20T00:01:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-ACC-O",
+        "ใครรับงานเร็วที่สุด",
+        now,
+      );
+
+      expect(answer.text).toContain("P-ACC-SLOW รับงานเร็วที่สุด");
+      expect(answer.text).toContain("30 นาที");
+      expect(answer.text).not.toContain("P-ACC-GHOST");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// งานจริงเข้ามาทาง POST /sync/tasks เป็น ref "L-…" ซึ่ง applyTransition ปฏิเสธ
+// ⇒ task_event ว่าง และ accepted_at เป็น NULL ทั้งฐาน · สองคำถามนี้จึงคำนวณจากความว่างเปล่า
+// คำตอบต้องบอกความจริงข้อนั้น ไม่ใช่ทำหน้าเหมือนสถิติที่คำนวณมาแล้ว
+describe("สถิติที่ยังไม่มีข้อมูลต้องพูดตรง ๆ", () => {
+  async function seedSyncedOnlyDatabase(): Promise<SQLiteD1> {
+    const db = new SQLiteD1();
+    await insertPerson(db, "P-NOTIME-O", "management", "owner");
+    await insertPerson(db, "P-NOTIME-W", "operations", "worker");
+    await insertTask(db, {
+      ref: "L-9",
+      title: "งานที่ซิงก์มาจากฝั่ง LIVE",
+      status: "assigned",
+      assignee: "P-NOTIME-W",
+      createdAt: "2026-08-20T01:00:00.000Z",
+    });
+    return db;
+  }
+
+  it("stats_avg_cycle: บอกว่าระบบยังไม่มีข้อมูลเวลา และไม่มีตัวเลขปลอม", async () => {
+    const db = await seedSyncedOnlyDatabase();
+    try {
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-NOTIME-O",
+        "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
+        now,
+      );
+
+      expect(answer).toMatchObject({ intent: "stats_avg_cycle", matched: true });
+      expect(answer.text).toContain("ระบบยังไม่มีข้อมูลเวลารับงานและเวลาเสร็จงาน");
+      expect(answer.text).not.toMatch(/\d/);
+      expect(answer.text.endsWith("ค่ะ")).toBe(true);
+      expect(answer.text.match(/ค่ะ|คะ/g) ?? []).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stats_fastest_accept: บอกว่าระบบยังไม่มีเวลารับงาน และไม่ชี้ตัวใคร", async () => {
+    const db = await seedSyncedOnlyDatabase();
+    try {
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-NOTIME-O",
+        "ใครรับงานเร็วที่สุด",
+        now,
+      );
+
+      expect(answer).toMatchObject({
+        intent: "stats_fastest_accept",
+        matched: true,
+      });
+      expect(answer.text).toContain("ระบบยังไม่มีข้อมูลเวลารับงาน");
+      expect(answer.text).not.toContain("P-NOTIME-W");
+      expect(answer.text).not.toMatch(/\d/);
+      expect(answer.text.match(/ค่ะ|คะ/g) ?? []).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("help: ติดป้ายเฉพาะสองข้อที่ยังไม่มีข้อมูล และไม่ติดเมื่อมีข้อมูลจริง", async () => {
+    const db = await seedSyncedOnlyDatabase();
+    try {
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-NOTIME-O",
+        "AI ช่วยอะไรได้บ้าง",
+        now,
+      );
+
+      expect(answer.text.split("\n")).toHaveLength(21);
+      expect(answer.text).toContain(
+        "16. พิมพ์ว่า \"เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน\" ได้ (ยังไม่มีข้อมูล)",
+      );
+      expect(answer.text).toContain(
+        "17. พิมพ์ว่า \"ใครรับงานเร็วที่สุด\" ได้ (ยังไม่มีข้อมูล)",
+      );
+      expect(answer.text.match(/\(ยังไม่มีข้อมูล\)/g) ?? []).toHaveLength(2);
+
+      // ฐานหลักมีทั้งเวลารับและเวลาเสร็จจริง ⇒ ห้ามติดป้ายทิ้งไว้ให้ดูเหมือนใช้ไม่ได้
+      const seeded = await askQuestion(
+        database.asD1(),
+        "P-W1",
+        "AI ช่วยอะไรได้บ้าง",
+        now,
+      );
+      expect(seeded.text).not.toContain("ยังไม่มีข้อมูล");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("มีข้อมูลเวลาอยู่นอกขอบเขตผู้ถาม = ยังต้องตอบแบบ 'เดือนนี้ในขอบเขตที่พี่ดูได้' ไม่ใช่ 'ระบบไม่มี'", async () => {
+    const db = new SQLiteD1();
+    try {
+      await insertPerson(db, "P-OUT-W", "operations", "worker");
+      await insertPerson(db, "P-OUT-OTHER", "finance", "worker");
+      await insertTask(db, {
+        ref: "T-OUT-DONE",
+        title: "งานของแผนกอื่นที่มีเวลาครบ",
+        status: "completed",
+        assignee: "P-OUT-OTHER",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        acceptedAt: "2026-08-10T00:10:00.000Z",
+        completedAt: "2026-08-10T01:00:00.000Z",
+      });
+
+      const answer = await askQuestion(
+        db.asD1(),
+        "P-OUT-W",
+        "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
+        now,
+      );
+
+      expect(answer.text).toContain("เดือนนี้ไม่มีงานที่มีทั้งเวลารับและเวลาเสร็จ");
+      expect(answer.text).not.toContain("ระบบยังไม่มีข้อมูล");
+      expect(answer.text).not.toContain("P-OUT-OTHER");
+    } finally {
+      db.close();
+    }
+  });
+});
 
 describe("ข้อความที่คนอ่านจริง", () => {
   it("แสดงสถานะเป็นภาษาไทย และเลขงานที่ซิงก์มาเป็น 'งาน #<เลข>'", async () => {

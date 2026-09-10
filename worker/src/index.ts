@@ -14,6 +14,7 @@ import { askQuestion } from "./queryEngine.ts";
 import { processQueue } from "./queue.ts";
 import { previewSummaryRound, processScheduledSummaries, runSummaryRoundNow } from "./summary.ts";
 import type { Env } from "./types.ts";
+import { BUILT_AT, GIT_SHA } from "./version.ts";
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(body), {
@@ -39,13 +40,17 @@ async function handleHealth(env: Env, now: string): Promise<Response> {
   try {
     const health = await readHealth(env.DB);
     log(now, "health", "ok", ref);
-    return json({ ok: true, ts: now, ...health });
+    return json({ ok: true, ts: now, version: GIT_SHA, builtAt: BUILT_AT, ...health });
   } catch {
     log(now, "health", "unavailable", ref);
     return json(
       {
         ok: false,
         ts: now,
+        // version/builtAt มาจากตอน build ไม่ได้อ่านจาก D1 ⇒ ตอบได้แม้ฐานล่ม
+        // (จุดประสงค์ของมันคือบอกว่า "commit ไหนกำลังล่ม" — เป็น null ตอนนี้คือเสียของ)
+        version: GIT_SHA,
+        builtAt: BUILT_AT,
         queueDepth: null,
         lastIngestAt: null,
         // รูปร่างต้องเหมือนตอนปกติเสมอ — ผู้อ่าน (selfcheck) จะได้แยก "อ่านค่าไม่ได้" (null)
