@@ -1061,8 +1061,11 @@ Worker ไม่มี LINE token (`worker/src/types.ts:1-13`) ทุกข้�
 
 **กติกาใหม่:**
 1. **"ยังไม่อยู่บน `main` = ยังไม่เสร็จ"** — ทุกเซสชัน (เครื่องนี้ · คลาวด์ · มือถือ) ทำงานผ่าน GitHub เท่านั้น
-2. `aim` → **Cloudflare Workers Builds** ผูก repo ตรง: push `main` = build + deploy จากฝั่ง Cloudflare เอง (root `worker/` ·
-   build `npm ci` · deploy `npx wrangler d1 migrations apply aim-db --remote && npx wrangler deploy`) · ไม่มี token ที่ไหนนอก Cloudflare
+2. `aim` → **Cloudflare Workers Builds** ผูก repo ตรง: push `main` = build + deploy จากฝั่ง Cloudflare เอง · ไม่มี token ที่ไหนนอก Cloudflare
+   **ค่าที่ตั้งจริง (ผูกเสร็จ 2026-09-10 21:05):** Root directory `/` (package.json อยู่ root ไม่ใช่ `worker/`) ·
+   Build `npm ci` · Deploy `npm run db:migrate:remote && npm run deploy` (สอง script นี้ชี้ `--config worker/wrangler.toml` อยู่แล้ว) ·
+   Version command `npx wrangler versions upload --config worker/wrangler.toml` · Production branch `main`
+   ⚠ ครั้งแรกเคยแนะนำ root = `worker` โดยไม่ได้ตรวจ — ผิด build จะหา package.json ไม่เจอ
    · `worker/wrangler.toml` เข้า git ได้ (ตรวจแล้ว: มีแค่ `account_id`/`database_id` ซึ่งเป็นเลขอ้างอิง ไม่ใช่กุญแจ)
 3. `vendor-ksk` → **task ดึงเองทุก 1 นาที** (`git fetch` → `pull --ff-only` → `php -l` → ตกแล้ว `reset --hard ORIG_HEAD`) ·
    ต้องรันด้วยบัญชี Administrator (credential GitHub อยู่ใน Credential Manager ของ user นั้น) หรือ fine-grained PAT อ่านอย่างเดียว

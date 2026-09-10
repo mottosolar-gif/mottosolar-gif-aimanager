@@ -67,7 +67,8 @@
 ## 0. GitHub เป็นจุดควบคุมเดียว (พี่เต้เคาะ 2026-09-10 · D-2026-09-10-ข)
 
 - **"ยังไม่อยู่บน `main` = ยังไม่เสร็จ"** — ทุกเซสชัน (เครื่องที่บ้าน · คลาวด์ · มือถือ) ทำงานผ่าน GitHub เท่านั้น
-- deploy ฝั่งนี้ = **Cloudflare Workers Builds ผูก repo ตรง** (push `main` → Cloudflare build+deploy เอง) ·
+- deploy ฝั่งนี้ = **Cloudflare Workers Builds ผูก repo ตรง** (push `main` → Cloudflare build+deploy เอง · ผูกแล้ว 2026-09-10 21:05 ·
+  Root `/` · Build `npm ci` · Deploy `npm run db:migrate:remote && npm run deploy` · ดูสถานะที่แท็บ Deployments ของ Worker) ·
   `worker/wrangler.toml` **อยู่ใน git แล้ว** (มีแค่ `account_id`/`database_id` ซึ่งเป็นเลขอ้างอิง ไม่ใช่กุญแจ — กุญแจอยู่ใน Worker secrets)
 - ฝั่ง LIVE (`KSK-Decepticons`) มี task ดึงจาก `main` ทุก 1 นาที ⇒ **เลิกแก้ไฟล์ live บนเครื่องตรง ๆ รวมถึง AI ทุกตัว**
 - คำตัดสินใหม่ใช้เลขแบบวันที่ `D-YYYY-MM-DD-ก` (เลขเรียงชนกันมาแล้ว 3 รอบ — ดูหัว `docs/DECISIONS_P0.md`)
