@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Manager As-Built · 2026-09-11 (ตรวจจากเครื่องจริง · หลังปิดโปรเจกต์)</title>
+<style>
+  :root{--paper:#EEF1F4;--card:#FFFFFF;--sunk:#E4E9ED;--ink:#16202B;--ink-2:#4A5866;--ink-3:#75828F;--rule:#C7D0D9;--rule-soft:#DDE3E9;--plan:#0B6E8C;--alert:#B24A20;--ok:#2E6F4E;--warn:#8A6410;--shadow:0 1px 2px rgba(22,32,43,.06);--display:"Chakra Petch","IBM Plex Sans Thai",system-ui,sans-serif;--body:"IBM Plex Sans Thai",system-ui,-apple-system,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",monospace}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#11171E;--card:#18202A;--sunk:#131A22;--ink:#E4EAF0;--ink-2:#A3B0BD;--ink-3:#78848F;--rule:#2D3944;--rule-soft:#232E39;--plan:#4FB4D4;--alert:#E08355;--ok:#66BE8E;--warn:#D6A63F;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.72;padding-inline:20px;margin:0}
+  .wrap{max-width:920px;margin:0 auto;padding-block:44px 72px}
+  p{margin:0;max-width:68ch}
+  h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.24}
+  .mast{display:flex;flex-direction:column;gap:18px;padding-bottom:26px;border-bottom:2px solid var(--ink)}
+  .stamp{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--alert);display:flex;flex-wrap:wrap;gap:14px;align-items:baseline}
+  .stamp span:not(:first-child){color:var(--ink-3)}
+  h1{font-size:clamp(30px,5.4vw,46px);font-weight:700;letter-spacing:-.01em}
+  .thesis{font-size:clamp(17px,2.2vw,20px);line-height:1.62;color:var(--ink-2);max-width:60ch}
+  .thesis b{color:var(--ink);font-weight:600}
+  section{margin-top:58px}
+  .eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px}
+  h2{font-size:clamp(21px,3vw,27px);font-weight:600;margin-bottom:14px}
+  .lede{color:var(--ink-2);margin-bottom:26px}
+  code{font-family:var(--mono);font-size:.88em;background:var(--sunk);padding:.1em .34em;border-radius:3px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:22px;font-size:13.5px;color:var(--ink-2)}
+  .legend div{display:flex;gap:8px;align-items:baseline}
+  .legend b{color:var(--ink);font-weight:600;font-size:14px}
+  .plates{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .plate{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:18px 16px 14px;box-shadow:var(--shadow)}
+  .plate.built{border-color:var(--alert)}
+  .plate-hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--rule-soft)}
+  .plate-hd h3{font-size:16px;font-weight:600}
+  .plate-hd .when{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .plate.plan .plate-hd h3{color:var(--plan)}
+  .plate.built .plate-hd h3{color:var(--alert)}
+  .flowbox{border:1.5px solid var(--rule);border-radius:4px;padding:10px 12px;margin:8px 0;background:var(--sunk);font-size:13px;line-height:1.5}
+  .flowbox b{display:block;font-size:13.5px}
+  .flowbox .n{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--plan)}
+  .plate.built .flowbox .n{color:var(--alert)}
+  .plate.built .flowbox{border-color:var(--alert)}
+  .plate.built .flowbox.new{border-color:var(--ok);background:#E9F3ED}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .plate.built .flowbox.new{background:#14261C}}
+  .plate.built .flowbox.new .n{color:var(--ok)}
+  .arrow{font-family:var(--mono);font-size:11px;color:var(--ink-2);text-align:center;padding:2px 0}
+  .plate.built .arrow.hot{color:var(--alert);font-weight:600}
+  .ghost{border-style:dashed;color:var(--ink-3)}
+  .ghost b{text-decoration:line-through;color:var(--ink-3)}
+  figcaption{margin-top:16px;font-size:13.5px;line-height:1.62;color:var(--ink-2);max-width:74ch}
+  .callout{margin-top:30px;border-left:3px solid var(--alert);background:var(--card);border-radius:0 4px 4px 0;padding:20px 22px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px}
+  .callout h3{font-size:17px;font-weight:600;color:var(--alert)}
+  .callout.ok{border-left-color:var(--ok)} .callout.ok h3{color:var(--ok)}
+  .flow{font-family:var(--mono);font-size:12.5px;line-height:1.9;background:var(--sunk);border-radius:3px;padding:12px 14px;overflow-x:auto;white-space:pre;color:var(--ink-2)}
+  .flow b{color:var(--ink);font-weight:600}.flow .hot{color:var(--alert);font-weight:600}
+  .tablewrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:14.5px}
+  th,td{text-align:left;vertical-align:top;padding:14px 16px 14px 0;border-bottom:1px solid var(--rule-soft)}
+  th{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--rule);padding-bottom:9px}
+  td:first-child{width:30%;font-weight:600}
+  td .sub{display:block;font-weight:400;color:var(--ink-3);font-size:13px;line-height:1.5;margin-top:2px}
+  tbody tr:last-child td{border-bottom:none}
+  .gates{display:flex;flex-direction:column;margin-top:4px}
+  .gate{display:grid;grid-template-columns:58px 1fr auto;gap:18px;align-items:start;padding:16px 0;border-bottom:1px solid var(--rule-soft)}
+  .gate:last-child{border-bottom:none}
+  .gate .code{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--ink-3);padding-top:1px}
+  .gate.done .code{color:var(--ok)}.gate.open .code{color:var(--warn)}.gate.blocked .code{color:var(--alert)}
+  .gate .what{font-size:14.5px;line-height:1.6}.gate .what b{font-weight:600}
+  .gate .what .g{display:block;color:var(--ink-3);font-size:13px;margin-top:3px}
+  .chip{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.04em;padding:4px 10px;border-radius:2px;white-space:nowrap;border:1px solid currentColor}
+  .chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--alert)}
+  .drift{display:grid;grid-template-columns:repeat(2,1fr);gap:0 30px}
+  .drift div{padding:15px 0;border-bottom:1px solid var(--rule-soft);font-size:14.5px;line-height:1.6}
+  .drift b{font-weight:600;display:block;margin-bottom:1px}.drift span{color:var(--ink-2)}
+  .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .num{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:14px 16px;box-shadow:var(--shadow)}
+  .num .v{font-family:var(--display);font-size:26px;font-weight:700;line-height:1.1}
+  .num .k{font-size:12.5px;color:var(--ink-3);margin-top:4px;line-height:1.4}
+  .num.ok .v{color:var(--ok)}.num.bad .v{color:var(--alert)}.num.plan .v{color:var(--plan)}
+  .before{font-family:var(--mono);font-size:12px;color:var(--ink-3);text-decoration:line-through;margin-right:6px}
+  .timeline{border-left:2px solid var(--rule);margin-left:6px;padding-left:18px}
+  .tl{position:relative;padding:8px 0 12px;font-size:14.5px;line-height:1.6}
+  .tl::before{content:"";position:absolute;left:-24px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--ok);border:2px solid var(--paper)}
+  .tl.bad::before{background:var(--alert)}.tl.warn::before{background:var(--warn)}
+  .tl .t{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em}
+  .bottom{margin-top:58px;padding:30px 0 0;border-top:2px solid var(--ink);display:flex;flex-direction:column;gap:16px}
+  .bottom .two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .quote{padding:18px 20px;border-radius:4px;background:var(--card);border:1px solid var(--rule);box-shadow:var(--shadow)}
+  .quote .k{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;margin-bottom:7px}
+  .quote.a .k{color:var(--plan)}.quote.b .k{color:var(--alert)}.quote p{font-size:15.5px;line-height:1.6}
+  .verdict{font-size:16.5px;line-height:1.7;max-width:70ch}.verdict b{font-weight:600}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--rule-soft);font-family:var(--mono);font-size:11.5px;color:var(--ink-3);line-height:1.8}
+  a{color:var(--plan)}
+  @media (max-width:760px){.plates,.drift,.bottom .two{grid-template-columns:1fr}.nums{grid-template-columns:1fr 1fr}.gate{grid-template-columns:46px 1fr;gap:12px}.gate .chip{grid-column:2}body{font-size:15.5px}.wrap{padding-block:34px 56px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="mast">
+  <div class="stamp"><span>As-Built · ผังของจริง</span><span>แบบเดิม 2026-08-27</span><span>ตรวจ 2026-09-11 · 08:10</span><span>aim @6d21442</span><span>KSK-Decepticons @96a4d0a</span><span>ฉบับก่อน 2026-09-10 21:58</span></div>
+  <h1>AI Manager — แผนวางไว้ยังไง สร้างจริงออกมาเป็นอะไร <span style="color:var(--ink-3);font-weight:500">· ฉบับหลังปิดโปรเจกต์</span></h1>
+  <p class="thesis">แผนคือ “ย้ายบ้านไปคลาวด์ แล้วให้ฝั่งเดิมอ่านอย่างเดียว” · ของจริงคือ <b>ฝั่งเดิมเป็นทั้งประตูหน้าและสมอง</b> คลาวด์เป็นสำเนาที่ตอบคำถามได้ · <b>คืน 10–11 ก.ย.</b>: ใบปิดทุกประตูรวมไฟล์เดียว · P5 เปลี่ยนเป็น “เดินเมื่อมีเหตุ” พร้อมตัวนับจุดชนวน · ทดสอบชั้น LLM 60 คำถามผ่านทางเข้าจริง แล้วแก้ 5 ใบในคืนเดียว — <b>คำถามธรรมดาถึงเครื่องตอบข้อมูล 10/40 → 39/41</b></p>
+  <div class="legend">
+    <div><b>✅</b> เซสชันนี้ยิงของจริง/เปิดไฟล์/อ่านฐานเองบน cim-server</div>
+    <div><b>📄</b> เชื่อตามใบตัดสิน คนอื่นวัด</div>
+    <div><b>📌</b> ผ่านด้วยคำตัดสินเจ้าของระบบ ไม่ได้รันเทส</div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">01 · ผังเทียบแบบ</div>
+  <h2>สี่ชั้นที่วางไว้ สร้างจริงได้สองชั้น — วันที่ 11 เพิ่มตัวนับกับยามที่แผนไม่เคยมี</h2>
+  <p class="lede">แบบเดิมให้คลาวด์เป็นประตูหน้า แล้วส่งงานหนักลง homelab ก่อนค่อยไปอ่าน cim-server · ของจริงกลับด้าน — LINE ลงที่เครื่อง PHP ก่อน แล้วเครื่องนั้นส่งต่อขึ้นคลาวด์ · GitHub อยู่เหนือทั้งสองเครื่อง · <b>ใหม่ 11 ก.ย. (สีเขียว):</b> คำถามที่คลาวด์ตอบไม่ได้ถูกนับไว้ในบ้าน และมียามยิงชุดคำถาม 62 ข้อผ่านทางเข้าจริงทุกครั้งที่แตะกฎ</p>
+  <figure>
+    <div class="plates">
+      <div class="plate plan">
+        <div class="plate-hd"><h3>แบบที่วางไว้</h3><span class="when">IMPLEMENTATION_PLAN §2-เดิม</span></div>
+        <div class="flowbox"><b>LINE · ผู้ใช้ 12 คน</b></div>
+        <div class="arrow">webhook ↓</div>
+        <div class="flowbox"><span class="n">①</span><b>Cloudflare Workers</b>ประตูหน้า · รับ webhook ตอบใน ms · เข้าคิว · Cron = นาฬิกา · D1/KV</div>
+        <div class="arrow">ดึงคิวออกไปทำ ↓</div>
+        <div class="flowbox"><span class="n">②</span><b>homelab (เต้น้อย)</b>ชั้นสมอง · งานหนัก · เรียก LLM · วิเคราะห์รูป · ถือ token OA</div>
+        <div class="arrow">ขออ่าน (read-only) ↓</div>
+        <div class="flowbox"><span class="n">③</span><b>cim-server</b>ชั้นความจริงเดิม · อ่านอย่างเดียว ห้ามเขียน</div>
+        <div class="flowbox"><span class="n">④</span><b>GitHub + Notion</b>เก็บโค้ด + deploy · Notion = จอให้พี่เต้แก้กฎ</div>
+      </div>
+      <div class="plate built">
+        <div class="plate-hd"><h3>ของจริงที่รันอยู่</h3><span class="when">✅ ตรวจจากซอร์ส + ยิง production 08:10</span></div>
+        <div class="flowbox"><span class="n">④'</span><b>GitHub = จุดควบคุมเดียว (D-2026-09-10-ข)</b>KSK-Decepticons (ส่วนตัว) · aimanager (สาธารณะ) · “ยังไม่อยู่บน main = ยังไม่เสร็จ” · คืนนี้ 6 push ทั้งสองฝั่ง ไม่แตะไฟล์ live ตรง ๆ สักครั้ง</div>
+        <div class="arrow hot">ksk-git-pull ดึงทุก 1 นาที ↓ &nbsp;&nbsp;&nbsp; Workers Builds deploy ทุก push ↓</div>
+        <div class="flowbox"><b>LINE · ผู้ใช้ 12 คน</b></div>
+        <div class="arrow hot">webhook ↓ (ไม่ผ่านคลาวด์)</div>
+        <div class="flowbox"><span class="n">③→①②</span><b>vendor-ksk (PHP) บน cim-server</b>ประตูหน้า + สมอง (ด่านความรู้ 5 ชั้น · เรียก LLM เอง) + เจ้าของความจริง · tbl_task = ความจริงของ “งาน” (D-P0-18) · webhook spool ตอบ 200 ใน ~100 ms · <b style="display:inline">11 ก.ย.:</b> สารบัญคำถามเลิกชิงตอบคำถามข้อมูล · ตัวห่อ LLM จดตัดกลางตามจริง · พรอมต์ล็อกปุ่ม/ห้ามแต่งสถานะ</div>
+        <div class="flowbox new"><span class="n">ใหม่</span><b>tbl_aim_ask_miss — ตัวนับคำถามที่คลาวด์ตอบไม่ได้ (D-2026-09-10-ฉ)</b>จดในบ้านตอนคลาวด์ตอบ intent=unmatched · เขียนผ่าน utf8mb4 · selfcheck อ่านทุกเช้า · ≥ 5 ครั้ง/7 วัน จากคน ≥ 2 = จุดชนวนเปิด P5 · จับคำถามจริงของเจ้าของระบบได้ตั้งแต่ 2 แถวแรก (04:54)</div>
+        <div class="arrow hot">forward ดิบ /ingest/line ↓ &nbsp; /sync/tasks ทุก 10 นาที ↓ &nbsp; ↑ aim_notify → LINE push</div>
+        <div class="flowbox"><span class="n">①</span><b>Cloudflare Worker · aim-ingest</b>สำเนาปลายทาง · 20 intent ตอบด้วย SQL ล้วน <b style="display:inline">ไม่มี LLM</b> · cron 1 นาที · D1 (KV ไม่ได้ใช้) · <b style="display:inline">ไม่มี LINE token</b> · <b style="display:inline">11 ก.ย.:</b> กฎ intent รับภาษาแชทมือถือ + อังกฤษ 4 intent + สถานะระบบ (414 เทส)</div>
+        <div class="flowbox new"><span class="n">ใหม่</span><b>bin/llm_replay.php --gate — ยามยิงชุดคำถาม 62 ข้อผ่าน aim_ask_handle() จริง</b>ฟรี (ไม่เรียก LLM) · คลาวด์จริงอ่านอย่างเดียว · ต้องรันทุกครั้งที่แตะกฎ intent / วลีสารบัญ / พรอมต์ · คืนนี้ ✅ cloud hit 39/41 · php-hijack 0</div>
+        <div class="flowbox ghost"><span class="n">②</span><b>homelab — ชั้นสมอง</b>เหลือ: คลังไฟล์รูป (D-009) · สรุปแชตรายวัน/monitor สำหรับ DSR · ทะเบียนชื่อ · heartbeat</div>
+        <div class="flowbox ghost"><b>Notion — จอแก้กฎ</b>ไม่เคยถูกใช้</div>
+      </div>
+    </div>
+    <figcaption>✅ <code>GET /healthz</code> 08:07 ตอบ <code>version = 6d21442e14ba</code> = HEAD · queueDepth 0 · deadJobs 0 · strandedEvents 0 · <code>worker/src/types.ts:1-13</code> ไม่มี LINE token · <code>lib/aim_ask.php</code> จดตัวนับที่จุดรับ <code>intent=unmatched</code> ก่อนถอยไป LLM · ผู้ตรวจอิสระจับได้ว่า <code>db()</code> เป็น utf8mb3 ⇒ อิโมจิจะถูกตัดเงียบ — เขียนผ่าน <code>db4()</code> แทน · KSK-Decepticons ดึง <code>a3f5d28 → 7ba0904 → 93dad66 → 96a4d0a</code> เอง</figcaption>
+  </figure>
+
+  <div class="callout ok">
+    <h3>สิ่งที่ตัวนับบอกในคืนแรก</h3>
+    <div class="flow"><b>04:54</b>  พี่เต้: “AI ทำไรได้บ้าง”  →  คลาวด์ unmatched  →  LLM ชนเพดาน 512 token  →  “น้องกุ้งยังไม่เข้าใจ”
+<b>05:31</b>  ทดสอบ 60 คำถามผ่านทางเข้าจริง: คลาวด์เข้าเป้า <span class="hot">10/40</span> · สารบัญชิงตอบ <span class="hot">8</span> · ตัดกลาง 2 · LLM ต้องทำงาน 39 ครั้ง
+<b>07:45</b>  หลังแก้ 5 ใบ: คลาวด์เข้าเป้า <b>38/41</b> · ชิงตอบ <b>0</b> · ตัดกลาง <b>0</b> · LLM 18 ครั้ง  ·  <b>08:05</b> เพิ่ม “ระบบโอเคไหม” → <b>39/41</b></div>
+    <p>จุดอ่อนไม่ได้อยู่ที่ LLM ตอบผิด — อยู่ที่ <b>คำถามธรรมดา 3 ใน 4 ไปไม่ถึงเครื่องตอบข้อมูล</b> (กฎ intent ต้องมีคำครบชุด · สารบัญความรู้ยืนขวางหน้า) แล้วหลุดไป LLM ที่ไม่มีสิทธิ์อ่านข้อมูล ⇒ ผู้ใช้เข้าใจว่าระบบทำไม่ได้ ทั้งที่ทำได้</p>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">02 · ตัวเลขจริง</div>
+  <h2>วัดจากเครื่องก่อนตัดสินใจ — และวัดซ้ำหลังแก้</h2>
+  <div class="nums">
+    <div class="num ok"><div class="v"><span class="before">10/40</span>39/41</div><div class="k">คำถามภาษาแชท 41 แบบ (19+1 intent × 2) ไปถึงเครื่องตอบข้อมูลของคลาวด์ · 2 ที่เหลือตั้งใจให้กำกวม = ไม่ตอบดีกว่าตอบผิด intent</div></div>
+    <div class="num ok"><div class="v"><span class="before">8</span>0</div><div class="k">คำถามข้อมูลที่ถูกด่านความรู้ PHP ชิงตอบด้วยข้อความสำเร็จรูป “ดูที่ปุ่มริชเมนู” — ถอด 8 วลีในสารบัญ (งานของฉัน · งานค้าง · วันลา · ทำอะไรได้ …)</div></div>
+    <div class="num ok"><div class="v"><span class="before">2</span>0</div><div class="k">LLM ถูกตัดกลางที่ 512 token แล้วกลายเป็น “ยังไม่เข้าใจ” · เพดาน 1024 · tbl_ai_usage จด Ok=0 error max_tokens ตามจริง (เดิม Ok = HTTP 200) · selfcheck มีบรรทัดนับ</div></div>
+    <div class="num ok"><div class="v">12 วันติด</div><div class="k">reconcile tbl_task ↔ D1 ตรงกัน 100% (30 ส.ค.–10 ก.ย. · 10 ก.ย. 2/2) · จะเป็น 13 หลังรอบ 23:30 คืน 11 ก.ย. · ประตูปิดขั้นที่ 1 ครบ 17 ก.ย.</div></div>
+    <div class="num plan"><div class="v">66 push/วัน</div><div class="k">≈ 1,991/เดือน = 13% ของ 15,000 (12 คน) · เพิ่มคนต้องวัดใหม่ · 0 ชม./เดือน downtime ยังยืน (D-2026-09-10-ง)</div></div>
+    <div class="num plan"><div class="v"><span class="before">311</span>414 เทส</div><div class="k">Worker · smoke ฝั่ง PHP: aim_ask 80 · llm_wrapper 54 (ใหม่) · qa_index 49 · fim_qa 43 · kb_match 69 · escalation 32 — เขียวทั้งหมดบน live · typecheck 0 · lint 0</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">03 · ทีละชั้น</div>
+  <h2>เกิดอะไรขึ้นกับแต่ละชั้น</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>ชั้นที่แผนวาง</th><th>ของจริง 2026-09-11</th></tr></thead>
+    <tbody>
+      <tr><td>① Cloudflare Workers<span class="sub">ประตูหน้า · คิว · Cron · D1/KV</span></td><td>✅ aim-ingest + D1 + cron 1 นาที · 6 endpoint · <b>ไม่ใช่ประตูหน้า</b> — สำเนา+เครื่องตอบ 20 intent แบบ SQL ล้วน · deploy เองทุก push · <b>11 ก.ย.:</b> กฎ intent 18/20 ตัวได้คำพ้องภาษาแชท (ปิดงาน/เลยกำหนด/ยุ่งที่สุด/ทำไร) + อังกฤษ 4 intent + สถานะระบบ · ผู้ตรวจอิสระจับกฎกว้างเกิน 5 จุด (helpdesk · ใบเบิกของไม่มีคนรับ · เครื่องมือค้างเกิน · ใบลาถูกปฏิเสธ) แก้ก่อน push</td></tr>
+      <tr><td>② homelab (เต้น้อย)<span class="sub">ชั้นสมอง · LLM · รูป · token OA</span></td><td>❌ ไม่ได้เป็นสมอง — เหลือ 4 บทบาท: คลังไฟล์รูป · สรุปแชต/monitor สำหรับ DSR · ทะเบียนชื่อ · heartbeat · ไม่เปลี่ยน</td></tr>
+      <tr><td>③ cim-server<span class="sub">ความจริงเดิม อ่านอย่างเดียว</span></td><td>🔀 <b>สมอง + ประตูหน้า + เจ้าของความจริง</b> (vendor-ksk) · <b>11 ก.ย.:</b> ตัวนับ tbl_aim_ask_miss · สารบัญคำถามถอด 8 วลีที่ชนกับ intent คลาวด์ (แก้ที่ข้อมูล ไม่ใช่โค้ด) · ตัวห่อ LLM แยก parse ออกมาเป็นฟังก์ชันบริสุทธิ์ + จด Ok ตามความจริง · banter 1024 · พรอมต์ล็อกปุ่มริชเมนู 4 ปุ่ม / ถามอังกฤษให้บอกวลีไทย / ออกตัวก่อนเดา / ห้ามตอบสถานะระบบเอง · เช็ค “เรียงด่าน” ในยาม 2 ตัวแดงบน main มาตั้งแต่ 26af4f5 (ไม่มีใครรันซ้ำ) แก้ anchor แล้ว</td></tr>
+      <tr><td>④ GitHub + Notion<span class="sub">เก็บโค้ด + จอแก้กฎ</span></td><td>✅ จุดควบคุมเดียว · คืนนี้อีกเซสชันหนึ่ง push งาน xml-mail มาคั่น (8ee09ad) — rebase ทับ ไม่ชนไฟล์ ⇒ กติกา “ทำบน branch/worktree แล้ว ff เข้า live” ใช้ได้จริงกับสองเซสชันพร้อมกัน · ❌ Notion ไม่เคยใช้</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">04 · ประตู — ตารางที่อ้างของจริง (CLOSEOUT_GATES.md)</div>
+  <h2>แผนตั้ง 6 ประตู · ผ่านด้วยของจริง 3 · ผ่านด้วยคำตัดสิน 3 — ป้ายบอกตามจริง ไม่ติ๊กเกิน</h2>
+  <div class="gates">
+    <div class="gate done"><div class="code">P0</div><div class="what"><b>ท่อและกระดูก</b> — 7 ข้อใน WP-P0-6<span class="g">6/7 ด้วยของจริง (curl 200 · idempotency · smoke_aim_forward 16/16 · dump · privacy scan · code review) · ข้อ 4 “ปิด cim-server แล้ว cron คลาวด์ยังเดิน” ไม่เคยรันเทส — 📌 D-P0-25</span></div><span class="chip warn">📌 ปิดตามคำตัดสิน</span></div>
+    <div class="gate done"><div class="code">P1</div><div class="what"><b>ประสาทสัมผัส</b> — เดินครบเส้นทาง · ยิงซ้ำ 3 ครั้งไม่เกิดงานซ้ำ<span class="g">📄 D-P0-12 ปุ่มจริงบนมือถือ · ✅ endpoints.test.ts ส่ง /sync/tasks ซ้ำผ่าน fetch จริงไม่เกิดแถวซ้ำ</span></div><span class="chip ok">✅ ปิดจบ</span></div>
+    <div class="gate done"><div class="code">P2</div><div class="what"><b>สายตา + ปาก</b> — 20 คำถามไม่มีคำตอบแต่ง · ลูกน้องถามงานคนอื่นต้องไม่เห็น<span class="g">📄 D-P0-19 20/20 production · ✅ 11 ก.ย. เพิ่ม: คำถามเดิม 20 ข้อพิมพ์แบบภาษาแชท 41 แบบ ถึง intent 39/41 · สิทธิ์ worker ถูกปฏิเสธคำถามทีมด้วยข้อความชัด</span></div><span class="chip ok">✅ ปิดจบ</span></div>
+    <div class="gate open"><div class="code">P3</div><div class="what"><b>ความคิดริเริ่ม</b> — 10 สถานการณ์ · ไม่เตือนซ้ำ · นับโควตา push<span class="g">✅ smoke_escalation 32/32 · ✅ นับ push ใน selfcheck · 🟡 กันซ้ำพิสูจน์ด้วยการอ่านซอร์ส · ไม่มี task เรียก task_escalate.php โดยตั้งใจ — 📌 D-2026-09-10-ค</span></div><span class="chip warn">📌 พร้อมแต่ยังไม่เปิดสวิตช์</span></div>
+    <div class="gate done"><div class="code">P4</div><div class="what"><b>ทดสอบเต็มระบบ</b> — ตรงกัน 100% ติดกัน 7 วัน · โควตา push<span class="g">✅ 12 วันติด (streak_now แถวดิบ) · push 66/วัน = 13% · ตัวนับแยก “ไม่ตรง / ยังไม่ถึงรอบ / ยามไม่ได้รัน” · ไม่ลบ L-9 (D-2026-09-10-จ)</span></div><span class="chip ok">✅ ผ่านจริง · ยังเดินต่อ</span></div>
+    <div class="gate open"><div class="code">P5</div><div class="what"><b>ทยอยย้ายขึ้น Cloudflare — เดินเมื่อมีเหตุเท่านั้น</b><span class="g">ขั้น 1–2 ของ tbl_task ผ่าน (mirror 12 วันติด) · ขั้น 3 สลับเจ้าของ = ไม่ทำ (D-2026-09-10-ก) · เครื่องมือขั้น 4 พร้อม (smoke_legacy_silence 45/45) · <b>D-2026-09-10-ฉ:</b> ไม่ mirror ตารางใดล่วงหน้า — เริ่มเมื่อ (ก) ตัวนับ ≥ 5 ครั้ง/7 วัน จากคน ≥ 2 · (ข) ล่มช่วงเวลางาน ≥ 1/เดือน · (ค) เจ้าของระบบสั่ง · วันนี้ตัวนับ = 3 ครั้ง 1 คน (ทั้งหมดของเจ้าของระบบเอง)</span></div><span class="chip warn">📌 เดินเมื่อมีเหตุ · ตัวนับ live</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">05 · ทำอะไรไปแล้ว — คืน 10 → เช้า 11 ก.ย.</div>
+  <h2>จากใบปิดโปรเจกต์ ถึงการทดสอบชั้น LLM แล้วแก้ในคืนเดียว</h2>
+  <div class="timeline">
+    <div class="tl"><div class="t">22:42–23:05</div><b>C.1</b> รันยาม 10 ตัว + vitest + typecheck + healthz แล้วเขียน <code>CLOSEOUT_GATES.md</code> — ตารางประตูรายเฟสอ้าง file:line/คำตัดสิน · นิยาม “จบ” 6 ข้อรายหลักฐาน · checklist ส่งมอบ 14 ข้อ · ผู้ตรวจอิสระจับสถานะที่ติ๊กเกินจริง 11 ข้อ ลด ✅ เป็น 📌 ตามจริง</div>
+    <div class="tl"><div class="t">23:10–00:25</div><b>D-2026-09-10-ฉ</b> P5 เดินเมื่อมีเหตุ + ตัวนับ <code>tbl_aim_ask_miss</code> (Opus เขียน ถูกตัดกลางเพราะโควตา · ผู้กำกับปิดต่อ · ผู้ตรวจจับ utf8mb3 vs utf8mb4) · smoke_aim_ask 67 → 80</div>
+    <div class="tl"><div class="t">04:05</div>push ทั้งสองฝั่งหลังพี่เต้ “push ได้” — classifier บล็อกท่า push จาก worktree ⇒ ff-merge เข้า live แล้ว push main ปกติ (ผลเท่ากับตัวดึง)</div>
+    <div class="tl bad"><div class="t">04:54</div>พี่เต้พิมพ์ “AI ทำไรได้บ้าง” → “ยังไม่เข้าใจ” 2 ครั้ง — <b>ตัวนับที่เพิ่ง live จับได้ทั้ง 2 แถว</b> · ต้นเหตุ: help ไม่รู้จัก “ทำไร” + LLM ชนเพดาน 512 เพราะพรอมต์สั่งไล่ลิสต์คำสั่ง</div>
+    <div class="tl warn"><div class="t">05:31–05:55</div><b>ทดสอบชั้น LLM</b> ตามที่พี่เต้ตัดขอบเขต (“LLM น่าจะเป็นจุดอ่อนที่สุด”) — Haiku แต่ง 60 คำถาม · Opus เขียน harness · Fable รันจริง (LLM 39 ครั้ง) · Sonnet ผู้ใช้เชี่ยวชาญให้คะแนน — <b>คลาวด์เข้าเป้า 10/40 · สารบัญชิงตอบ 8 · ตัดกลาง 2</b> · รายงาน <code>LLM_TEST_2026-09-11.md</code></div>
+    <div class="tl"><div class="t">06:00–07:45</div><b>แก้ 5 ใบพร้อมกัน</b> (Opus ×2 · Sonnet ×2 · ผู้ตรวจ Sonnet ×2 · Fable รันยาม+sabotage เอง): L1 ถอด 8 วลีสารบัญ · L2 คำพ้อง intent (400 เทส) · L3 ตัวห่อ LLM จดตัดกลาง + 1024 · L4 พรอมต์ล็อก · L5 ยาม replay ถาวร — rebase ทับงาน xml-mail ของอีกเซสชัน · ff เข้า live · <b>วัดซ้ำ 38/41 · 0 · 0</b></div>
+    <div class="tl"><div class="t">08:00</div>พี่เต้: “ระบบโอเคไหม” ต้องตอบจากฐาน ไม่ใช่ LLM เดา — system_status ได้คำพ้อง 10 แบบ (414 เทส) + พรอมต์ห้ามตอบสถานะเอง · deploy · <b>39/41</b> · ตอบใน 0.18 วิจากฐานจริง</div>
+    <div class="tl bad"><div class="t">ตัดสินว่าไม่ทำ / ไม่ใช่ของเรา</div>เลขไทย ๑๔๕ · BOM (ทีมพิมพ์มือถือ ไม่มีทางเกิด) · selfcheck แดง 63 บรรทัดจาก ksk-next ลงทะเบียน Kind=table ที่ lib ไม่รู้จัก (อีก estate) · ไฟล์ซ้อม DIAG ค้างใน spool (ลบเองใน 24 ชม.) · task xml-mail ล้ม 01:30 — อีกเซสชันแก้แล้ว 3 คอมมิต</div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">06 · ขอบเขตที่เลื่อนไปจากแบบ</div>
+  <h2>สิ่งที่แผนเขียนไว้แล้วไม่ตรงแล้ว — และคำตัดสินที่มาแทน</h2>
+  <div class="drift">
+    <div><b>“ย้ายสมองขึ้นคลาวด์” → ไม่ทำ</b><span>D-2026-09-10-ก: สมองอยู่ฝั่งที่ข้อมูลและสิทธิ์เขียนอยู่ · คลาวด์ไม่มี LLM · ความไวได้จาก spool ในบ้าน</span></div>
+    <div><b>“ระบบไม่ตายตามเครื่องเดียว” → ปิดด้วยตัวเลข</b><span>D-2026-09-10-ง: downtime 0 ชม./เดือน · tunnel_watchdog วัดต่อ</span></div>
+    <div><b>P5 “ย้ายทีละระบบตามตาราง” → เดินเมื่อมีเหตุ</b><span>D-2026-09-10-ฉ: ไม่มีตารางย้ายล่วงหน้า · ตัวนับคำถามที่ตอบไม่ได้เป็นจุดชนวน · ผู้สมัครแรก tbl_site_activity ต้องมีคำถามจริงชี้ไปก่อน · ทางเลือก “ถามกลับบ้านแทน mirror” เก็บไว้ถามตอนมีตารางที่สอง</span></div>
+    <div><b>“ด่านความรู้ยืนหน้าโหมดคุยเล่น” → ต้องไม่ยืนหน้าเครื่องตอบข้อมูล</b><span>สารบัญคำถาม (1 ก.ย.) ถูกวางไว้หน้าคลาวด์ด้วย ⇒ วลี “งานค้าง/งานของฉัน” ชิงตอบ · แก้ที่ข้อมูลในหน้า qa_index.php · กติกาใหม่ใน CLAUDE.md: วลีสารบัญห้ามซ้ำกับคำของ intent</span></div>
+    <div><b>“ยามผ่าน = ใช้ได้” → ยามต้องยิงชุดคำถามที่คนพิมพ์จริง</b><span>ยามเดิมทดสอบด้วยประโยคที่ผู้เขียนคิดเอง (บทเรียน D-P0-08) · ตอนนี้มี corpus 62 ข้อภาษาแชท + ยาม --gate · และตัวนับจากผู้ใช้จริงเป็นชุดคำถามที่ดีที่สุด</span></div>
+    <div><b>Codex เขียน · Claude ห้ามเขียน → ทีมเอเจนต์</b><span>คืนนี้ 12 เอเจนต์ · ผู้เขียน ≠ ผู้ตรวจ ทุกดิฟ · ผู้ตรวจจับได้จริง 7+11 ข้อก่อนถึง live · ผู้กำกับรันยามเองทุกรอบ · ของออกนอกเครื่องเจ้าของระบบอนุมัติ</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">07 · เหลืออะไร</div>
+  <h2>นิยาม “จบ” 6 ข้อผ่านครบ · ส่งมอบรอมือเจ้าของระบบ</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>งาน</th><th>สถานะ</th></tr></thead>
+    <tbody>
+      <tr><td>C.5 checklist ส่งมอบ (CLOSEOUT_GATES.md §6)</td><td>ข้อ 1–4 ทำแล้วคืนนี้ (push · build · healthz · live ดึง) · <b>ข้อ 5–11 พี่เต้กดเอง ~15 นาที</b> แล้วพิมพ์ “ส่งมอบแล้ว” · ข้อ 5ข วันที่ 17 ก.ย. (ประตูปิดขั้นที่ 1: ตัวนับใหม่นับถูก 7 รอบ)</td></tr>
+      <tr><td>สตรีค P4</td><td>12 → 13 หลังรอบ 23:30 คืน 11 ก.ย.</td></tr>
+      <tr><td>ตัวนับ ask_miss</td><td>อ่านทุกสัปดาห์ (selfcheck) · วันนี้ 3 ครั้ง 1 คน · ถึงเกณฑ์ (ก) เมื่อ ≥ 5 จากคน ≥ 2 ⇒ เปิดตารางอ่านว่าถามเรื่องอะไรก่อนตัดสิน</td></tr>
+      <tr><td>ข้อค้างเล็กจากรอบ LLM</td><td>LLM คืน reply ว่างโดย JSON ถูก 1/18 (ควรจด empty_reply) · ถามอังกฤษได้คำตอบไทย 1 ครั้ง · fim_qa “สรุปงานวันนี้” ใช้ 28 วิ · c27/c34 ตั้งใจให้กำกวม</td></tr>
+      <tr><td>เปิดสวิตช์ P3 (task เรียก task_escalate.php)</td><td>งานแยกใบ · ขออนุมัติใหม่ตอนนั้น</td></tr>
+      <tr><td>branch protection ทั้งสอง repo</td><td>เมื่อเจ้าของระบบพร้อม · 2 คลิก</td></tr>
+      <tr><td>นอกขอบเขต</td><td>selfcheck แดง 63 บรรทัด Kind=table (ksk-next) · DATA_POLICY 3 ข้อ ทบทวน 2026-10-15 · แผน OA แยกโปรเจกต์</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<div class="bottom">
+  <div class="two">
+    <div class="quote a"><div class="k">แผน 2026-08-27</div><p>ย้ายบ้านไปคลาวด์ แล้วให้ฝั่งเดิมอ่านอย่างเดียว</p></div>
+    <div class="quote b"><div class="k">ของจริง 2026-09-11 08:10</div><p>ฝั่งเดิมเป็นทั้งประตูหน้าและสมอง คลาวด์เป็นสำเนาที่ตอบคำถามได้ — ตอนนี้คำถามที่คนพิมพ์จริงไปถึงมันแล้ว 39/41 และคำถามที่ไปไม่ถึงถูกนับไว้เป็นหลักฐานสำหรับก้าวต่อไป</p></div>
+  </div>
+  <p class="verdict">นิยาม “จบ” 6 ข้อผ่านครบและ<b>ทุกประตูมีป้ายบอกตามจริง</b> (ของจริง 3 · คำตัดสิน 3) · สิ่งที่แผนไม่เคยสั่งแต่จำเป็น — ตัวนับคำถามที่ตอบไม่ได้ กับยามที่ยิงประโยคที่คนพิมพ์จริง — <b>เกิดขึ้นในคืนเดียวเพราะเจ้าของระบบชี้ถูกว่า LLM คือจุดอ่อน</b> แล้วผลวัดบอกว่าจุดอ่อนจริงคือทางไปถึง LLM ไม่ใช่ LLM เอง · เหลือแค่มือเจ้าของระบบกด checklist ส่งมอบ</p>
+</div>
+
+<footer>
+  ที่มา: aim/docs/CLOSEOUT_GATES.md · LLM_TEST_2026-09-11.md (+ llm_test/) · AS_BUILT.md · PROJECT_CLOSEOUT_PLAN.md · DECISIONS_P0.md (D-P0-01..29 + D-2026-08-29-ก … D-2026-09-10-ฉ) · KSK-Decepticons CLAUDE.md ตารางยาม<br>
+  ตรวจฝั่ง LIVE บน HKServer-CIMS จริง (ยิง production · อ่าน MySQL · smoke ทั้งชุด) · ฝั่งคลาวด์ mottosolar-gif-aimanager @6d21442 · ฉบับก่อน as-built-2026-09-10.html (21:58)<br>
+  ✅ /healthz ณ 08:07 ตอบ ok · version 6d21442e14ba · queueDepth 0 · deadJobs 0 · strandedEvents 0 · llm_replay --gate ✅ cloud hit 39/41 · php-hijack 0
+</footer>
+
+</div>
+</body>
+</html>
