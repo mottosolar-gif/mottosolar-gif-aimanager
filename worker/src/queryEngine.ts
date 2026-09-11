@@ -392,7 +392,24 @@ const intentDefinitions: readonly IntentDefinition[] = [
     id: "system_status",
     menuOrder: 20,
     menuText: "สถานะระบบ",
-    rules: [["สถานะ", "ระบบ"], ["ระบบ", "ทำงาน"]],
+    // Real data (latest inbox event, cron tick, queue depth) must win over the
+    // LLM fallback for every everyday phrasing of "is the system OK right
+    // now" — a bare ["ระบบ"] is refused: it would swallow any sentence that
+    // merely mentions "the system" in passing (leave/tool-loan/goods talk).
+    rules: [
+      ["สถานะ", "ระบบ"],
+      ["ระบบ", "ทำงาน"],
+      ["ระบบ", "โอเค"],
+      ["ระบบ", "ปกติ"],
+      ["ระบบ", "เป็นไง"],
+      ["ระบบ", "เป็นยังไง"],
+      ["ระบบ", "ใช้ได้"],
+      ["ระบบ", "ล่ม"],
+      ["ระบบ", "มีปัญหา"],
+      ["ระบบ", "ยังอยู่"],
+      ["system", "status"],
+      ["system", "ok"],
+    ],
   },
 ];
 

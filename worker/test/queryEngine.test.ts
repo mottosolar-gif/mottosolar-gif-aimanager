@@ -306,6 +306,58 @@ describe("ordered pattern matching", () => {
   });
 });
 
+// 2026-09-11: "ระบบโอเคไหมตอนนี้" used to fall through to the LLM, which
+// invented "ระบบใช้งานได้ปกติ" instead of answering from the real inbox
+// event / cron tick / queue data system_status already reads. These are the
+// everyday phrasings that must now win against real data, not a guess.
+const systemStatusPositiveCases = [
+  "ระบบโอเคไหมตอนนี้",
+  "สถานะระบบเป็นไง",
+  "ระบบปกติไหม",
+  "ระบบเป็นยังไงบ้าง",
+  "ระบบใช้ได้ไหม",
+  "ระบบล่มหรือเปล่า",
+  "ระบบมีปัญหาไหม",
+  "ตอนนี้ระบบยังอยู่ไหม",
+  "system status",
+  "is the system ok",
+];
+
+const systemStatusNegativeCases = [
+  // Clock-in trouble is the PHP-side attendance flow, not the AI Manager's
+  // own health. Mentioning "ระบบ" in passing must not steal it.
+  "ลงเวลาเข้าระบบไม่ได้",
+  // "ระบบ" is a coincidental prefix here; the subject is a leave request.
+  "ระบบลาป่วยพรุ่งนี้",
+  // Bare "ระบบ" + "งาน" with no status adjective attached must stay unmatched.
+  "ระบบงานเอกสารยังไม่เสร็จ",
+];
+
+describe("system_status query phrasing (2026-09-11 fix)", () => {
+  it.each(systemStatusPositiveCases)(
+    "answers %s from real data instead of letting it fall through to the LLM",
+    (phrase) => {
+      expect(matchQuestionIntent(phrase)).toBe("system_status");
+    },
+  );
+
+  it.each(systemStatusNegativeCases)(
+    "keeps %s unmatched instead of stealing an unrelated subject",
+    (phrase) => {
+      expect(matchQuestionIntent(phrase)).toBeNull();
+    },
+  );
+
+  // BORDERLINE, decided on purpose: "ของเข้าระบบปกติไหม" reads like a
+  // goods-intake question, not the AI Manager's own status, but no other
+  // intent rule in the registry claims it either (checked against every
+  // rule above) — so resolving it here beats leaving it for the LLM to
+  // guess. Revisit if a future goods/inventory intent ever wants "ของเข้า".
+  it("accepts the borderline goods-intake phrasing because no other intent claims it", () => {
+    expect(matchQuestionIntent("ของเข้าระบบปกติไหม")).toBe("system_status");
+  });
+});
+
 // The 40 Thai + 4 English phrasings replayed on 2026-09-11 (LLM_TEST finding 2),
 // copied in on purpose: a test that reads docs/ would go red when docs move.
 // null = must stay unmatched. "unmatched is better than the wrong intent."
