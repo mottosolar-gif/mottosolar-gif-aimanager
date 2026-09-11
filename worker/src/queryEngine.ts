@@ -90,6 +90,12 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["งาน", "ยังไม่มีคนรับ"],
       ["งาน", "ยังไม่มีผู้รับ"],
       ["งาน", "ยังไม่ได้มอบหมาย"],
+      // "ไม่มีคนทำ" is deliberately absent: it collides with idle-stock talk.
+      // Every rule keeps "งาน": without it these catch goods/PO/5S talk
+      // ("ใบเบิกของยังไม่มีคนรับ", "พัสดุยังไม่มีผู้รับ").
+      ["งาน", "ไม่มีคนรับ"],
+      ["งาน", "ไม่มีผู้รับ"],
+      ["งาน", "ยังไม่มีใครรับ"],
     ],
     teamOnly: true,
   },
@@ -101,6 +107,31 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["ใคร", "ยังไม่รับงาน"],
       ["ใคร", "ไม่รับงาน"],
       ["มอบหมาย", "งาน", "ยังไม่รับ"],
+      // "ยังไม่รับ / ไม่ยอมรับ" = not accepted yet. Outright refusal is team_rejected.
+      ["ยังไม่รับงาน"],
+      ["ไม่ยอมรับงาน"],
+      ["ยังไม่กดรับงาน"],
+      ["ยังไม่ตอบรับงาน"],
+    ],
+    teamOnly: true,
+  },
+  // team_overdue is matched before team_most_open: every rule below names an
+  // overdue word, so it cannot steal a plain "who is backed up" question, while
+  // "งานทีมค้างไปแล้ว" lands on overdue instead of the busiest-person ranking.
+  {
+    id: "team_overdue",
+    menuOrder: 10,
+    menuText: "งานที่เกินกำหนดของทีม",
+    rules: [
+      ["งาน", "เกินกำหนด", "ทีม"],
+      ["ทีม", "งาน", "เลยกำหนด"],
+      ["ทีม", "เกินกำหนด"],
+      ["ทีม", "เลยกำหนด"],
+      ["ทีม", "ค้างเกิน"],
+      ["ทีม", "ค้างไปแล้ว"],
+      ["ทีม", "overdue"],
+      ["ทุกคน", "เกินกำหนด"],
+      ["ทุกคน", "เลยกำหนด"],
     ],
     teamOnly: true,
   },
@@ -114,14 +145,15 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["งาน", "ค้าง", "ทีม"],
       ["งาน", "ค้าง", "ทุกคน"],
       ["งาน", "ค้าง", "คนอื่น"],
+      ["ยุ่งที่สุด"],
+      ["ยุ่งสุด"],
+      ["ค้างเยอะที่สุด"],
+      ["ค้างมากที่สุด"],
+      ["งานเยอะที่สุด"],
+      ["งานเยอะสุด"],
+      ["most open"],
+      ["who has the most"],
     ],
-    teamOnly: true,
-  },
-  {
-    id: "team_overdue",
-    menuOrder: 10,
-    menuText: "งานที่เกินกำหนดของทีม",
-    rules: [["งาน", "เกินกำหนด", "ทีม"], ["ทีม", "งาน", "เลยกำหนด"]],
     teamOnly: true,
   },
   {
@@ -133,6 +165,11 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["วันนี้", "ทีม", "งาน"],
       ["วันนี้", "ทุกคน", "งาน"],
       ["วันนี้", "คนอื่น", "งาน"],
+      ["วันนี้", "ทีม"],
+      ["วันนี้", "ทุกคน"],
+      ["วันนี้", "คนอื่น"],
+      // "ชุด" is the site word for a shift/crew, so it is an explicit team cue.
+      ["วันนี้", "ทั้งชุด"],
     ],
     teamOnly: true,
   },
@@ -140,20 +177,45 @@ const intentDefinitions: readonly IntentDefinition[] = [
     id: "stats_rejected_month",
     menuOrder: 15,
     menuText: "งานถูกปฏิเสธกี่ใบเดือนนี้",
-    rules: [["งาน", "ปฏิเสธ", "เดือนนี้"]],
+    rules: [
+      // "งาน" is mandatory here: leave slips and goods get rejected too
+      // ("ใบลาถูกปฏิเสธเดือนนี้กี่ใบ" must stay unmatched).
+      ["งาน", "ปฏิเสธ", "เดือนนี้"],
+      ["งาน", "ไม่ผ่าน", "เดือนนี้"],
+      ["งาน", "ไม่อนุมัติ", "เดือนนี้"],
+      ["งาน", "ตีกลับ", "เดือนนี้"],
+    ],
   },
   {
     id: "team_rejected",
     menuOrder: 12,
     menuText: "ใครปฏิเสธงานบ้าง",
-    rules: [["ใคร", "ปฏิเสธ", "งาน"]],
+    rules: [
+      // Same reason as stats_rejected_month: "ใครไม่อนุมัติใบลาบ้าง" is not ours.
+      ["ใคร", "ปฏิเสธ", "งาน"],
+      ["คนไหน", "ปฏิเสธ", "งาน"],
+      ["ใคร", "ไม่อนุมัติ", "งาน"],
+      ["คนไหน", "ไม่อนุมัติ", "งาน"],
+      ["ปฏิเสธงาน"],
+      ["ไม่อนุมัติงาน"],
+    ],
     teamOnly: true,
   },
   {
     id: "stats_fastest_accept",
     menuOrder: 17,
     menuText: "ใครรับงานเร็วที่สุด",
-    rules: [["ใคร", "รับ", "งาน", "เร็ว"], ["คนไหน", "รับ", "งาน", "ไว"]],
+    rules: [
+      ["ใคร", "รับ", "งาน", "เร็ว"],
+      ["คนไหน", "รับ", "งาน", "ไว"],
+      ["ใคร", "รับ", "เร็ว"],
+      ["คนไหน", "รับ", "เร็ว"],
+      // Bare "ไว" also matches "ไว้", so speed synonyms stay spelled out.
+      ["ใคร", "รับ", "ฉับไว"],
+      ["คนไหน", "รับ", "ฉับไว"],
+      ["ใคร", "ตอบรับ", "ไว"],
+      ["คนไหน", "ตอบรับ", "ไว"],
+    ],
     teamOnly: true,
     timestampAggregate: "accept",
   },
@@ -161,50 +223,114 @@ const intentDefinitions: readonly IntentDefinition[] = [
     id: "stats_avg_cycle",
     menuOrder: 16,
     menuText: "เวลาเฉลี่ยตั้งแต่รับงานถึงเสร็จงาน",
-    rules: [["งาน", "เฉลี่ย", "รับ", "เสร็จ"]],
+    rules: [
+      ["งาน", "เฉลี่ย", "รับ", "เสร็จ"],
+      ["เฉลี่ย", "รับ", "เสร็จ"],
+      ["เฉลี่ย", "รับ", "ปิด"],
+      ["งาน", "เฉลี่ย", "กี่วัน"],
+      ["งาน", "เฉลี่ย", "กี่ชั่วโมง"],
+      ["งาน", "เฉลี่ย", "กี่นาที"],
+      ["งาน", "เฉลี่ย", "นานแค่ไหน"],
+    ],
     timestampAggregate: "cycle",
   },
   {
     id: "stats_completed_month",
     menuOrder: 14,
     menuText: "งานเสร็จกี่ใบเดือนนี้",
-    rules: [["งาน", "เสร็จ", "เดือนนี้"]],
+    // "เสร็จ เดือนนี้" without "งาน" would swallow "ประชุมเสร็จเดือนนี้".
+    rules: [
+      ["งาน", "เสร็จ", "เดือนนี้"],
+      ["ปิดงาน", "เดือนนี้"],
+      ["ปิดได้", "เดือนนี้"],
+      ["ปิดไป", "เดือนนี้"],
+      ["เสร็จได้", "เดือนนี้"],
+      ["เสร็จไป", "เดือนนี้"],
+    ],
   },
   {
     id: "stats_new_today",
     menuOrder: 18,
     menuText: "วันนี้มีงานใหม่กี่ใบ",
-    rules: [["วันนี้", "งานใหม่"], ["งานเข้าใหม่", "วันนี้"]],
+    rules: [
+      ["วันนี้", "งานใหม่"],
+      ["งานเข้าใหม่", "วันนี้"],
+      ["เข้าใหม่", "วันนี้"],
+      ["ใบใหม่", "วันนี้"],
+    ],
+  },
+  // The week intent is matched before the day intent on purpose: every week rule
+  // carries an explicit week word, so a bare "ปิดงานกี่ใบ" can safely fall to today.
+  {
+    id: "my_done_week",
+    menuOrder: 5,
+    menuText: "งานที่เสร็จสัปดาห์นี้",
+    rules: [
+      ["งาน", "เสร็จ", "สัปดาห์นี้"],
+      ["สัปดาห์นี้", "ปิดงาน"],
+      ["เสร็จ", "สัปดาห์นี้"],
+      ["ปิด", "สัปดาห์นี้"],
+      ["เสร็จ", "อาทิตย์นี้"],
+      ["ปิด", "อาทิตย์นี้"],
+    ],
   },
   {
     id: "my_done_today",
     menuOrder: 4,
     menuText: "งานที่เสร็จวันนี้",
-    rules: [["งาน", "เสร็จ", "วันนี้"]],
-  },
-  {
-    id: "my_done_week",
-    menuOrder: 5,
-    menuText: "งานที่เสร็จสัปดาห์นี้",
-    rules: [["งาน", "เสร็จ", "สัปดาห์นี้"], ["สัปดาห์นี้", "ปิดงาน"]],
+    rules: [
+      ["งาน", "เสร็จ", "วันนี้"],
+      ["วันนี้", "เสร็จ"],
+      ["วันนี้", "ปิด"],
+      ["ปิดงาน"],
+      ["ปิดได้"],
+      ["เสร็จได้"],
+    ],
   },
   {
     id: "my_latest_assigned",
     menuOrder: 7,
     menuText: "งานล่าสุดที่ได้รับมอบหมาย",
-    rules: [["งานล่าสุด", "มอบหมาย"], ["เพิ่งมอบหมาย", "งาน"]],
+    rules: [
+      ["งานล่าสุด", "มอบหมาย"],
+      ["เพิ่งมอบหมาย", "งาน"],
+      ["เพิ่งได้งาน"],
+      ["เพิ่งได้รับงาน"],
+      ["งานล่าสุด", "ได้รับ"],
+      ["ล่าสุด", "มอบหมาย"],
+    ],
   },
   {
     id: "my_next",
     menuOrder: 6,
     menuText: "งานถัดไปที่ต้องทำ",
-    rules: [["งานถัดไป", "ต้องทำ"], ["งานไหน", "ทำต่อ"]],
+    // "ไร" is a substring of "อะไร", so one rule covers both spellings.
+    // A bare ["งานถัดไป"] is refused: it would swallow "พรุ่งนี้งานถัดไปคือติดตั้งเครน".
+    rules: [
+      ["งานถัดไป", "ต้องทำ"],
+      ["งานไหน", "ทำต่อ"],
+      ["งานถัดไป", "ไร"],
+      ["งานต่อไป", "ไร"],
+      ["งานต่อไป", "ต้องทำ"],
+      ["งานไหน", "ต้องทำต่อ"],
+    ],
   },
   {
     id: "my_overdue",
     menuOrder: 3,
     menuText: "งานที่เกินกำหนดแล้ว",
-    rules: [["งาน", "เกินกำหนด"], ["งาน", "เลยกำหนด"], ["งาน", "overdue"]],
+    // Bare ["เกินกำหนด"] is refused: payment and paperwork use the same words.
+    rules: [
+      ["งาน", "เกินกำหนด"],
+      ["งาน", "เลยกำหนด"],
+      ["งาน", "overdue"],
+      ["เกินกำหนดแล้ว"],
+      ["เลยกำหนดแล้ว"],
+      // "ค้างเกิน" without "งาน" catches tool-loan talk
+      // ("เครื่องมือค้างเกินกำหนดส่งคืน").
+      ["งาน", "ค้างเกิน"],
+      ["overdue", "task"],
+    ],
   },
   {
     id: "my_open",
@@ -214,6 +340,8 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["งาน", "ค้าง", "ตอนนี้"],
       ["ฉัน", "งานค้าง"],
       ["ของฉัน", "งานค้าง"],
+      ["มีงานค้าง"],
+      ["งานค้างอยู่"],
     ],
   },
   {
@@ -228,13 +356,37 @@ const intentDefinitions: readonly IntentDefinition[] = [
       ["งานของฉัน", "สถานะ"],
       ["งานฉัน", "สถานะ"],
       ["สถานะงาน", "ของฉัน"],
+      ["บอก", "งานของฉัน"],
+      ["บอก", "งานฉัน"],
+      ["งานของฉัน", "หน่อย"],
+      ["งานฉัน", "หน่อย"],
+      ["my task"],
     ],
   },
   {
     id: "help",
     menuOrder: 19,
     menuText: "AI ช่วยอะไรได้บ้าง",
-    rules: [["ช่วยอะไรได้"], ["ทำอะไรได้"], ["เมนู", "คำถาม"]],
+    // Latin rules rely on normalizeQuestion() lower-casing; Thai has no case.
+    rules: [
+      ["ช่วยอะไรได้"],
+      ["ทำอะไรได้"],
+      ["เมนู", "คำถาม"],
+      ["ทำไรได้"],
+      ["ช่วยไรได้"],
+      ["ช่วยเรื่องไหนได้"],
+      ["ช่วยเรื่องอะไรได้"],
+      ["ถามอะไรได้"],
+      ["เมนู", "มีอะไร"],
+      ["เมนู", "อะไรบ้าง"],
+      // Bare ["help"]/["menu"] caught "helpdesk มีเบอร์อะไร" and
+      // "menu ของเข้ามีอะไรบ้าง". ["help","me"] is refused too: it would eat
+      // "help me ลาป่วย", which belongs to the PHP side.
+      ["what can you do"],
+      ["what can i ask"],
+      ["what can you help"],
+      ["show", "menu"],
+    ],
   },
   {
     id: "system_status",

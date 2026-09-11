@@ -306,6 +306,187 @@ describe("ordered pattern matching", () => {
   });
 });
 
+// The 40 Thai + 4 English phrasings replayed on 2026-09-11 (LLM_TEST finding 2),
+// copied in on purpose: a test that reads docs/ would go red when docs move.
+// null = must stay unmatched. "unmatched is better than the wrong intent."
+const replayCases: Array<[string, string | null]> = [
+  ["งานของฉันมีอะไรบ้าง", "my_tasks"],
+  ["ดูงานฉันทั้งหมดหน่อย", "my_tasks"],
+  ["งานที่ค้างตอนนี้มีกี่ใบ", "my_open"],
+  ["ฉันมีงานค้างอยู่ไหมอ่ะ", "my_open"],
+  ["เกินกำหนดแล้วเท่าไหร่", "my_overdue"],
+  ["งานเลยกำหนดมีบ้าง", "my_overdue"],
+  ["วันนี้เสร็จได้กี่ใบ", "my_done_today"],
+  ["ปิดงานแล้วกี่อัน", "my_done_today"],
+  ["สัปดาห์นี้ปิดงานได้เท่าไหร่", "my_done_week"],
+  ["เสร็จสัปดาห์นี้มีกี่ใบ", "my_done_week"],
+  ["งานไหนต้องทำต่อ", "my_next"],
+  ["งานถัดไปคือไรเอ่ย", "my_next"],
+  ["มอบหมายงานล่าสุดตรงไหนหรือ", "my_latest_assigned"],
+  ["เพิ่งได้งานมาตอนไหน", "my_latest_assigned"],
+  ["มีงานไหนที่ยังไม่มีคนรับ", "team_unassigned"],
+  ["งานค้างที่ไม่มีผู้รับ", "team_unassigned"],
+  ["ใครยังไม่รับงานยัง", "team_unaccepted"],
+  ["มีคนไม่ยอมรับงานไหม", "team_unaccepted"],
+  ["ใครมีงานค้างเยอะที่สุด", "team_most_open"],
+  ["คนไหนยุ่งที่สุดในทีม", "team_most_open"],
+  ["ทีมเราเลยกำหนดไหนบ้าง", "team_overdue"],
+  // Resolved by an explicit rule (["ทีม","ค้างไปแล้ว"] on team_overdue) plus
+  // team_overdue now being matched first, rather than left on the busiest-person
+  // ranking it used to fall into.
+  ["งานทีมค้างไปแล้ว", "team_overdue"],
+  ["สรุปงานวันนี้ทั้งชุด", "team_today"],
+  ["ทีมวันนี้ทำอะไรไป", "team_today"],
+  ["ใครปฏิเสธงาน", "team_rejected"],
+  ["ใครไม่อนุมัติงาน", "team_rejected"],
+  // AMBIGUOUS: nothing says these are work items. Leave slips, PO lines and
+  // goods get rejected in this estate too, so the rule keeps requiring "งาน"
+  // and this phrasing stays unmatched.
+  ["เดือนนี้ปฏิเสธกี่ใบ", null],
+  ["งานไม่ผ่านเดือนนี้เท่าไหร่", "stats_rejected_month"],
+  ["ใครรับงานเร็วที่สุด", "stats_fastest_accept"],
+  ["คนไหนฉับไวที่สุดตอบรับ", "stats_fastest_accept"],
+  ["เฉลี่ยนานเท่าไหร่จากรับถึงเสร็จ", "stats_avg_cycle"],
+  ["ทำงานเฉลี่ยกี่วัน", "stats_avg_cycle"],
+  ["เดือนนี้ปิดได้กี่ใบ", "stats_completed_month"],
+  // AMBIGUOUS: no period word anywhere. Could be today, this week, or this
+  // month; guessing month would answer a question nobody asked.
+  ["งานเสร็จสิ้นเท่าไหร่", null],
+  ["วันนี้มีงานใหม่เข้ากี่ใบ", "stats_new_today"],
+  ["เข้าใหม่วันนี้เท่าไหร่", "stats_new_today"],
+  ["ทำอะไรได้บ้างน้องกุ้ง", "help"],
+  ["ช่วยเรื่องไหนได้บ้าง", "help"],
+  ["บอกงานของฉันหน่อย", "my_tasks"],
+  ["เมนูมีอะไรให้เลือก", "help"],
+  ["show my tasks", "my_tasks"],
+  ["what can you do", "help"],
+  ["who has the most open tasks", "team_most_open"],
+  ["my overdue tasks", "my_overdue"],
+];
+
+const reportedRealUserMisses: Array<[string, string]> = [
+  ["ทำไรได้บ้าง", "help"],
+  ["ช่วยไรได้", "help"],
+  ["ช่วยเรื่องไหนได้", "help"],
+  ["เมนูมีอะไร", "help"],
+  ["ปิดงานกี่ใบ", "my_done_today"],
+  ["ปิดได้กี่อัน", "my_done_today"],
+  ["เสร็จได้กี่งาน", "my_done_today"],
+  ["งานเลยกำหนดกี่ใบ", "my_overdue"],
+  ["งานเกินกำหนดเท่าไหร่", "my_overdue"],
+  ["งานค้างเกินมากี่ใบ", "my_overdue"],
+  ["งานไม่มีคนรับกี่ใบ", "team_unassigned"],
+  ["งานไม่มีผู้รับเท่าไหร่", "team_unassigned"],
+  ["ใครยุ่งที่สุด", "team_most_open"],
+  ["ใครค้างเยอะที่สุด", "team_most_open"],
+  ["ใครปฏิเสธงานบ้าง", "team_rejected"],
+  ["ไม่ยอมรับงานมีใครบ้าง", "team_unaccepted"],
+];
+
+// Count words must neither be required nor block: each pair is the same
+// question with and without a counting word.
+const countWordPairs: Array<[string, string, string]> = [
+  ["วันนี้เสร็จกี่ใบ", "วันนี้เสร็จ", "my_done_today"],
+  ["ปิดงานกี่อัน", "ปิดงาน", "my_done_today"],
+  ["งานเกินกำหนดกี่งาน", "งานเกินกำหนด", "my_overdue"],
+  ["ใครมีงานค้างเท่าไหร่", "ใครมีงานค้าง", "team_most_open"],
+];
+
+const commandNegativeCases = [
+  "สั่งงานให้สมชายไปเก็บของหน้าไซต์",
+  "สั่งงานให้สมชายทำรายงานวันนี้",
+  "ของเข้าวันนี้",
+  "ของเข้าวันนี้กี่ใบ",
+];
+
+// False positives caught by an independent review of the first synonym pass.
+// Each one is a real neighbouring subject (helpdesk, goods, 5S, tool loan,
+// leave slips) that broad rules swallowed.
+const reviewFalsePositiveCases = [
+  "helpdesk มีเบอร์อะไร",
+  "menu ของเข้ามีอะไรบ้าง",
+  "ใบเบิกของยังไม่มีคนรับ",
+  "พัสดุยังไม่มีผู้รับ",
+  "5ส โซนนี้ยังไม่ได้มอบหมายใคร",
+  "เครื่องมือค้างเกินกำหนดส่งคืน",
+  "ใบลาถูกปฏิเสธเดือนนี้กี่ใบ",
+  "ใครไม่อนุมัติใบลาบ้าง",
+  "help me ลาป่วย",
+];
+
+describe("natural phrasing replay", () => {
+  it.each(replayCases)("routes replayed phrase %s to %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it("keeps the replay corpus at its recorded size and reports the tally", () => {
+    expect(replayCases).toHaveLength(44);
+    const thaiCases = replayCases.slice(0, 40);
+    const resolved = thaiCases.filter(
+      ([phrase]) => matchQuestionIntent(phrase) !== null,
+    ).length;
+    const correct = thaiCases.filter(
+      ([phrase, expectedIntent]) => matchQuestionIntent(phrase) === expectedIntent,
+    ).length;
+    // Printed so the tally is visible in the run log, not only in a doc.
+    console.log(`replay tally: ${correct}/40 Thai as expected, ${resolved}/40 resolved`);
+    expect(correct).toBe(40);
+    // 38, not 40: two phrasings name no subject and no period, so they stay
+    // unmatched on purpose (see the AMBIGUOUS notes above).
+    expect(resolved).toBe(38);
+  });
+
+  it.each(reportedRealUserMisses)(
+    "answers real-user phrasing %s as %s",
+    (phrase, expectedIntent) => {
+      expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+    },
+  );
+
+  it.each(countWordPairs)(
+    "treats the count word in %s as optional, not required",
+    (withCountWord, withoutCountWord, expectedIntent) => {
+      expect(matchQuestionIntent(withCountWord)).toBe(expectedIntent);
+      expect(matchQuestionIntent(withoutCountWord)).toBe(expectedIntent);
+    },
+  );
+
+  it.each([
+    ["ไม่ยอมรับงาน", "team_unaccepted"],
+    ["ยังไม่รับงาน", "team_unaccepted"],
+    ["ปฏิเสธงาน", "team_rejected"],
+    ["ใครไม่อนุมัติงานบ้าง", "team_rejected"],
+  ])("keeps ยังไม่รับ and ปฏิเสธ apart for %s", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it.each([
+    ["SHOW MY TASKS", "my_tasks"],
+    ["Show My Tasks", "my_tasks"],
+    ["What Can You Do", "help"],
+    ["WHAT CAN I ASK", "help"],
+    ["Show Menu", "help"],
+    ["Who Has The Most Open Tasks", "team_most_open"],
+    ["My Overdue Tasks", "my_overdue"],
+  ])("matches Latin phrasing %s case-insensitively", (phrase, expectedIntent) => {
+    expect(matchQuestionIntent(phrase)).toBe(expectedIntent);
+  });
+
+  it.each(commandNegativeCases)(
+    "leaves the PHP-side command %s unmatched",
+    (phrase) => {
+      expect(matchQuestionIntent(phrase)).toBeNull();
+    },
+  );
+
+  it.each(reviewFalsePositiveCases)(
+    "does not answer the neighbouring subject %s",
+    (phrase) => {
+      expect(matchQuestionIntent(phrase)).toBeNull();
+    },
+  );
+});
+
 interface IntentAnswerCase {
   intent: string;
   actor: string;
